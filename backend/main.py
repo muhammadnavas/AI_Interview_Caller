@@ -191,6 +191,8 @@ class ConversationSession:
     status: str = "active"  # active, completed, failed
     confirmed_slot: Optional[str] = None
     turns: List[ConversationTurn] = None
+    # optional candidate info attached to this session
+    candidate: Optional[dict] = None
     
     def __post_init__(self):
         if self.turns is None:
@@ -261,7 +263,7 @@ def save_conversation_session(session: ConversationSession):
     except Exception as e:
         logger.error(f"Error saving conversation session: {e}")
 
-def get_or_create_session(call_sid: str, candidate_phone: str) -> ConversationSession:
+def get_or_create_session(call_sid: str, candidate_phone: str, candidate: Optional[dict] = None) -> ConversationSession:
     """Get existing session or create new one"""
     if call_sid in conversation_sessions:
         return conversation_sessions[call_sid]
@@ -270,7 +272,8 @@ def get_or_create_session(call_sid: str, candidate_phone: str) -> ConversationSe
         call_sid=call_sid,
         candidate_phone=candidate_phone,
         start_time=datetime.now().isoformat(),
-        turns=[]
+        turns=[],
+        candidate=candidate
     )
     conversation_sessions[call_sid] = session
     save_conversation_session(session)
@@ -318,6 +321,54 @@ def analyze_intent(text: str) -> tuple[str, float]:
     # Default: unclear intent
     return "unclear", 0.3
 
+
+def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
+    """Fetch candidate document from MongoDB by _id or by id string field.
+
+    Returns normalized dict or None.
+    """
+    try:
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            logger.warning("pymongo not installed; cannot fetch candidate by id")
+            return None
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            logger.debug("MONGODB_URI not configured; cannot fetch candidate by id")
+            return None
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # try ObjectId first
+        try:
+            from bson import ObjectId
+            query = {"_id": ObjectId(candidate_id)}
+            doc = coll.find_one(query)
+        except Exception:
+            # fallback to searching by id or email field
+            doc = coll.find_one({"id": candidate_id}) or coll.find_one({"email": candidate_id})
+
+        if not doc:
+            return None
+
+        return {
+            "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
+            "phone": doc.get("phone") or doc.get("phone_number"),
+            "email": doc.get("email"),
+            "position": doc.get("position") or doc.get("role"),
+            "company": doc.get("company") or doc.get("employer"),
+            "raw": doc,
+        }
+    except Exception as e:
+        logger.warning(f"Error fetching candidate by id: {e}")
+        return None
+
 def find_mentioned_time_slot(text: str, available_slots: List[str]) -> Optional[str]:
     """Find if any time slot is mentioned in the text"""
     text_lower = text.lower()
@@ -327,9 +378,13 @@ def find_mentioned_time_slot(text: str, available_slots: List[str]) -> Optional[
             return slot
     return None
 
-def get_ai_greeting() -> str:
-    """Get AI greeting message"""
-    return f"Hello {CANDIDATE['name']}! I'm calling from {CANDIDATE['company']} regarding your {CANDIDATE['position']} interview. Are you available to discuss timing?"
+def get_ai_greeting(candidate: Optional[dict] = None) -> str:
+    """Get AI greeting message. Use provided candidate dict or fall back to global CANDIDATE."""
+    c = candidate or CANDIDATE
+    name = c.get('name') if isinstance(c, dict) else 'Candidate'
+    company = c.get('company') if isinstance(c, dict) else 'Company'
+    position = c.get('position') if isinstance(c, dict) else 'position'
+    return f"Hello {name}! I'm calling from {company} regarding your {position} interview. Are you available to discuss timing?"
 
 def generate_ai_response(session: ConversationSession, user_input: str, intent: str, confidence: float) -> str:
     """Generate appropriate AI response based on conversation context and intent"""
@@ -408,9 +463,12 @@ async def twilio_voice(request: Request):
                 media_type="application/xml"
             )
         
-        # Create new conversation session
-        session = get_or_create_session(call_sid, from_number)
-        greeting = get_ai_greeting()
+        # Create new conversation session (if not created by outgoing call)
+        session = conversation_sessions.get(call_sid)
+        if not session:
+            session = get_or_create_session(call_sid, from_number)
+        # Use session-specific candidate if available
+        greeting = get_ai_greeting(session.candidate if session and session.candidate else None)
         
         logger.info(f"Starting conversation with greeting: {greeting}")
         
@@ -618,9 +676,15 @@ async def process_speech(request: Request):
         )
 
 @app.post("/make-actual-call")
-async def make_actual_call():
+async def make_actual_call(request: Request):
     """Make actual Twilio call with comprehensive validation"""
-    
+    # read optional candidate_id from JSON body
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    candidate_id = body.get("candidate_id") if isinstance(body, dict) else None
+
     # Validate Twilio credentials
     missing_creds = []
     if not TWILIO_ACCOUNT_SID:
@@ -636,11 +700,19 @@ async def make_actual_call():
             "message": f"Missing Twilio credentials: {', '.join(missing_creds)}. Check your .env file."
         }
     
-    # Validate candidate phone number
-    if not CANDIDATE["phone"] or CANDIDATE["phone"] == "+1234567890":
+    # Resolve candidate details (prefer candidate_id -> mongo -> env CANDIDATE)
+    candidate_info = None
+    if candidate_id:
+        candidate_info = fetch_candidate_by_id(candidate_id)
+
+    if not candidate_info:
+        # fall back to the global CANDIDATE loaded at startup
+        candidate_info = CANDIDATE
+
+    if not candidate_info or not candidate_info.get("phone") or candidate_info.get("phone") == "+1234567890":
         return {
             "status": "error",
-            "message": "Please configure a valid candidate phone number in CANDIDATE_PHONE"
+            "message": "Please provide a valid candidate_id or configure candidate phone number in env"
         }
     
     webhook_url = f"{WEBHOOK_BASE_URL}/twilio-voice"
@@ -654,7 +726,7 @@ async def make_actual_call():
         }
     
     # Validate phone number format
-    if not CANDIDATE["phone"].startswith("+"):
+    if not candidate_info.get("phone", "").startswith("+"):
         return {
             "status": "error",
             "message": "Phone number must include country code (e.g., +1234567890)"
@@ -663,6 +735,7 @@ async def make_actual_call():
     try:
         logger.info(f"Initiating call to {CANDIDATE['phone']}")
         logger.info(f"Using webhook: {webhook_url}")
+        logger.info(f"Using candidate: {candidate_info.get('email') or candidate_info.get('name')}")
         
         # Test Twilio client initialization
         try:
@@ -680,15 +753,15 @@ async def make_actual_call():
         # Create the call
         call = client.calls.create(
             url=webhook_url,
-            to=CANDIDATE["phone"],
+            to=candidate_info.get("phone"),
             from_=TWILIO_PHONE_NUMBER,
             timeout=30,  # Give more time for answer
             record=False,  # Don't record by default
         )
-        
+
         logger.info(f"Call initiated successfully - Call ID: {call.sid}")
         logger.info(f"Initial call status: {call.status}")
-        
+
         # Check call status after a moment
         import time
         time.sleep(2)
@@ -705,13 +778,18 @@ async def make_actual_call():
                 "call_sid": call.sid
             }
         
+        # create or update in-memory session and persist
+        session = get_or_create_session(call.sid, candidate_info.get("phone"), candidate=candidate_info)
+        session.candidate = candidate_info
+        save_conversation_session(session)
+
         return {
             "status": "success",
-            "message": f"Call initiated to {CANDIDATE['phone']}",
+            "message": f"Call initiated to {candidate_info.get('phone')}",
             "call_sid": call.sid,
             "call_status": updated_call.status,
             "webhook_url": webhook_url,
-            "candidate": CANDIDATE["name"],
+            "candidate": candidate_info.get("name"),
             "initial_status": call.status
         }
         
