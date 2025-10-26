@@ -7,16 +7,20 @@ import uvicorn
 import re
 import json
 import sqlite3
+from pymongo import MongoClient
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import logging
 
-# Configure logging: stream to stdout so Render captures logs (avoid writing files in container)
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()]
+    handlers=[
+        logging.FileHandler('conversation.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -34,16 +38,7 @@ TWILIO_PHONE_NUMBER = config("TWILIO_PHONE_NUMBER", default="")
 
 # OpenAI
 OPENAI_API_KEY = config("OPENAI_API_KEY", default="")
-# Initialize OpenAI client lazily and defensively to avoid import-time crashes
-openai_client = None
-if OPENAI_API_KEY:
-    try:
-        openai_client = OpenAI(api_key=OPENAI_API_KEY)
-        logger.info("OpenAI client initialized")
-    except Exception as e:
-        # Don't crash the whole app if OpenAI/httpx versions are incompatible or misconfigured
-        logger.warning(f"Failed to initialize OpenAI client: {e}")
-        openai_client = None
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # Webhook URL - Auto-detect ngrok or use config
 def get_webhook_url():
@@ -65,7 +60,7 @@ def get_webhook_url():
     print(f"Using configured URL: {configured_url}")
     return configured_url
 
-WEBHOOK_BASE_URL = get_webhook_url().rstrip('/')
+WEBHOOK_BASE_URL = get_webhook_url()
 
 # FastAPI app
 app = FastAPI(title="AI Interview Caller", description="Automated interview scheduling with conversation tracking")
@@ -104,29 +99,65 @@ async def startup_event():
         raise
 
 # CORS
-# Configure CORS using environment variable ALLOWED_ORIGINS (comma-separated)
-allowed_origins_raw = config("ALLOWED_ORIGINS", default="*")
-if allowed_origins_raw.strip() == "*":
-    allow_origins = ["*"]
-else:
-    allow_origins = [o.strip() for o in allowed_origins_raw.split(",") if o.strip()]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allow_origins,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Candidate data - Load from environment variables for security
-CANDIDATE = {
-    "name": config("CANDIDATE_NAME", default="John Doe"),
-    "phone": config("CANDIDATE_PHONE", default="+91 8660761403"),
-    "email": config("CANDIDATE_EMAIL", default="navasns0409@gmail.com"),
-    "position": config("CANDIDATE_POSITION", default="Software Engineer"),
-    "company": config("CANDIDATE_COMPANY", default="TechCorp"),
-}
+def load_candidate_from_mongo() -> dict | None:
+    """Try to load a candidate document from MongoDB.
+
+    Priority: if CANDIDATE_EMAIL is set in env, query by email; otherwise return the first document.
+    Returns a dict with keys: name, phone, email, position, company or None on failure/not found.
+    """
+    try:
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return None
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+
+        db = client[db_name]
+        coll = db[coll_name]
+
+        email = config("CANDIDATE_EMAIL", default=None)
+        query = {"email": email} if email else {}
+
+        doc = coll.find_one(query) if query else coll.find_one()
+        if not doc:
+            return None
+
+        return {
+            "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
+            "phone": doc.get("phone") or doc.get("phone_number"),
+            "email": doc.get("email"),
+            "position": doc.get("position") or doc.get("role"),
+            "company": doc.get("company") or doc.get("employer"),
+        }
+    except Exception as e:
+        logger.warning(f"Could not load candidate from MongoDB: {e}")
+        return None
+
+
+# Prefer candidate from MongoDB when available, fall back to env vars
+mongo_candidate = load_candidate_from_mongo()
+if mongo_candidate:
+    CANDIDATE = mongo_candidate
+    logger.info(f"Loaded candidate from MongoDB: {CANDIDATE.get('email')}")
+else:
+    CANDIDATE = {
+        "name": config("CANDIDATE_NAME", default="John Doe"),
+        "phone": config("CANDIDATE_PHONE", default="+91 8660761403"),
+        "email": config("CANDIDATE_EMAIL", default="navasns0409@gmail.com"),
+        "position": config("CANDIDATE_POSITION", default="Software Engineer"),
+        "company": config("CANDIDATE_COMPANY", default="TechCorp"),
+    }
 
 TIME_SLOTS = [
     "Monday at 10 AM",
