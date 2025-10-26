@@ -1,0 +1,14 @@
+# Render manifest template (edit values as needed)
+services:
+  - type: web
+    name: ai-interview-caller-backend
+    env: python
+    # root points to the backend folder in the repo
+    root: backend
+    plan: free # change to appropriate plan
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+
+# Note: Replace the repo/branch in the Render UI when creating the service or set them here if desired.
+# Set the environment variables (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, OPENAI_API_KEY,
+# WEBHOOK_BASE_URL, CANDIDATE_* etc.) in the Render dashboard for the service.

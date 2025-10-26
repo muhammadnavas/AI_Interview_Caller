@@ -1,0 +1,236 @@
+2025-10-26 11:15:30,800 - INFO - Database initialized successfully
+2025-10-26 11:15:30,800 - INFO - Database initialized successfully
+2025-10-26 11:15:30,801 - INFO - All configuration validated successfully
+2025-10-26 11:15:30,801 - INFO - AI Interview Caller service started successfully
+2025-10-26 11:15:30,801 - INFO - Webhook URL: http://localhost:8000
+2025-10-26 11:15:30,801 - INFO - Candidate: John Doe (+91 8660761403)
+2025-10-26 11:15:30,848 - INFO - 3 changes detected
+2025-10-26 11:16:53,317 - INFO - Database initialized successfully
+2025-10-26 11:16:53,318 - INFO - Database initialized successfully
+2025-10-26 11:16:53,318 - INFO - All configuration validated successfully
+2025-10-26 11:16:53,320 - INFO - AI Interview Caller service started successfully
+2025-10-26 11:16:53,320 - INFO - Webhook URL: https://a6a68ae5b6f4.ngrok-free.app
+2025-10-26 11:16:53,321 - INFO - Candidate: John Doe (+91 8660761403)
+2025-10-26 11:16:53,510 - INFO - Initiating call to +91 8660761403
+2025-10-26 11:16:53,510 - INFO - Using webhook: https://a6a68ae5b6f4.ngrok-free.app/twilio-voice
+2025-10-26 11:16:53,772 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:16:53,773 - INFO - GET Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b.json
+2025-10-26 11:16:53,773 - INFO - Headers:
+2025-10-26 11:16:53,773 - INFO - Accept : application/json
+2025-10-26 11:16:53,774 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:16:53,774 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:16:53,774 - INFO - Accept-Charset : utf-8
+2025-10-26 11:16:53,774 - INFO - -- END Twilio API Request --
+2025-10-26 11:16:54,866 - INFO - Response Status Code: 200
+2025-10-26 11:16:54,867 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '532', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:46:54 GMT', 'Content-Encoding': 'gzip', 'ETag': '45f0efa5a53f767af67a94a93a7f620b--gzip', 'Last-Modified': 'Wed, 03 Sep 2025 15:31:19 +0000', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQabf6008df830dded7fc722b820facea4', 'Twilio-Request-Duration': '0.047', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'Vary': 'Accept-Encoding, Origin', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 2d7c85577fd4606da8f295d1c26f0bb6.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'dXXWwIpyx9t-UREm15oCrgyuQFB4h1Oaf_acue_qhXA3MEa6A2bniQ==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none'}
+2025-10-26 11:16:54,867 - INFO - Twilio account validated: My first Twilio account
+2025-10-26 11:16:54,867 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:16:54,868 - INFO - POST Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b/Calls.json
+2025-10-26 11:16:54,868 - INFO - Headers:
+2025-10-26 11:16:54,868 - INFO - Content-Type : application/x-www-form-urlencoded
+2025-10-26 11:16:54,869 - INFO - Accept : application/json
+2025-10-26 11:16:54,869 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:16:54,869 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:16:54,870 - INFO - Accept-Charset : utf-8
+2025-10-26 11:16:54,871 - INFO - -- END Twilio API Request --
+2025-10-26 11:16:55,231 - INFO - Response Status Code: 201
+2025-10-26 11:16:55,232 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '2011', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:46:55 GMT', 'Location': 'https://call-service.us1.svc.twilio.com/v2/Accounts/CA3c23b6f6d19805ee1589340d2f1f557a', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQa9e241d05bbddd5b32df140ef509d99d', 'Twilio-Request-Duration': '0.104', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 2d7c85577fd4606da8f295d1c26f0bb6.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'h0AvclwU5HNFTEYLhQtjhVp8BN-9v1juMYi1TpPlQSdg4PzOdFJ8jQ==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none', 'Vary': 'Origin'}
+2025-10-26 11:16:55,232 - INFO - Call initiated successfully - Call ID: CA3c23b6f6d19805ee1589340d2f1f557a
+2025-10-26 11:16:55,232 - INFO - Initial call status: queued
+2025-10-26 11:16:57,239 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:16:57,239 - INFO - GET Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b/Calls/CA3c23b6f6d19805ee1589340d2f1f557a.json
+2025-10-26 11:16:57,239 - INFO - Headers:
+2025-10-26 11:16:57,240 - INFO - Accept : application/json
+2025-10-26 11:16:57,240 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:16:57,240 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:16:57,241 - INFO - Accept-Charset : utf-8
+2025-10-26 11:16:57,241 - INFO - -- END Twilio API Request --
+2025-10-26 11:16:57,597 - INFO - Response Status Code: 200
+2025-10-26 11:16:57,597 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '576', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:46:57 GMT', 'Content-Encoding': 'gzip', 'ETag': 'cc95b59a8f953e9937bca1318cd6663d--gzip', 'Last-Modified': '2025-10-26T05:46:55.000Z', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQ149b10febd8b4a03dd69aa354e7bcb9a', 'Twilio-Request-Duration': '0.040', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'Vary': 'Accept-Encoding, Origin', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 2d7c85577fd4606da8f295d1c26f0bb6.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'vG6eT2TqKvIYq41LflcdEs5znQi_j_1eg7xaDqKF2AvsLNGGz04n6Q==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none'}
+2025-10-26 11:16:57,598 - INFO - Updated call status: queued
+2025-10-26 11:21:36,185 - INFO - 1 change detected
+2025-10-26 11:21:38,362 - INFO - 1 change detected
+2025-10-26 11:21:40,786 - INFO - 1 change detected
+2025-10-26 11:21:42,111 - INFO - 1 change detected
+2025-10-26 11:21:51,765 - INFO - 1 change detected
+2025-10-26 11:21:52,117 - INFO - 1 change detected
+2025-10-26 11:21:52,475 - INFO - 1 change detected
+2025-10-26 11:21:52,835 - INFO - 1 change detected
+2025-10-26 11:21:53,197 - INFO - 1 change detected
+2025-10-26 11:21:53,555 - INFO - 1 change detected
+2025-10-26 11:21:53,915 - INFO - 1 change detected
+2025-10-26 11:21:54,276 - INFO - 1 change detected
+2025-10-26 11:21:54,684 - INFO - 1 change detected
+2025-10-26 11:21:55,136 - INFO - 1 change detected
+2025-10-26 11:21:55,488 - INFO - 1 change detected
+2025-10-26 11:21:55,895 - INFO - 1 change detected
+2025-10-26 11:21:56,301 - INFO - 1 change detected
+2025-10-26 11:21:56,704 - INFO - 1 change detected
+2025-10-26 11:21:57,108 - INFO - 1 change detected
+2025-10-26 11:21:57,515 - INFO - 1 change detected
+2025-10-26 11:21:57,917 - INFO - 1 change detected
+2025-10-26 11:21:58,322 - INFO - 1 change detected
+2025-10-26 11:21:58,728 - INFO - 1 change detected
+2025-10-26 11:21:59,131 - INFO - 1 change detected
+2025-10-26 11:21:59,539 - INFO - 1 change detected
+2025-10-26 11:21:59,893 - INFO - 1 change detected
+2025-10-26 11:22:00,303 - INFO - 1 change detected
+2025-10-26 11:22:00,709 - INFO - 1 change detected
+2025-10-26 11:22:01,116 - INFO - 1 change detected
+2025-10-26 11:22:01,524 - INFO - 1 change detected
+2025-10-26 11:22:01,927 - INFO - 1 change detected
+2025-10-26 11:22:02,334 - INFO - 1 change detected
+2025-10-26 11:22:02,743 - INFO - 1 change detected
+2025-10-26 11:22:03,200 - INFO - 1 change detected
+2025-10-26 11:22:03,605 - INFO - 1 change detected
+2025-10-26 11:22:04,015 - INFO - 1 change detected
+2025-10-26 11:22:04,420 - INFO - 1 change detected
+2025-10-26 11:22:04,827 - INFO - 1 change detected
+2025-10-26 11:22:05,182 - INFO - 1 change detected
+2025-10-26 11:22:05,591 - INFO - 1 change detected
+2025-10-26 11:22:05,996 - INFO - 1 change detected
+2025-10-26 11:22:06,404 - INFO - 1 change detected
+2025-10-26 11:22:06,813 - INFO - 1 change detected
+2025-10-26 11:22:07,218 - INFO - 1 change detected
+2025-10-26 11:22:07,725 - INFO - 1 change detected
+2025-10-26 11:22:08,142 - INFO - 1 change detected
+2025-10-26 11:22:08,548 - INFO - 1 change detected
+2025-10-26 11:22:08,954 - INFO - 1 change detected
+2025-10-26 11:22:09,308 - INFO - 1 change detected
+2025-10-26 11:22:09,723 - INFO - 1 change detected
+2025-10-26 11:22:10,179 - INFO - 1 change detected
+2025-10-26 11:22:10,582 - INFO - 1 change detected
+2025-10-26 11:22:10,986 - INFO - 1 change detected
+2025-10-26 11:22:11,392 - INFO - 1 change detected
+2025-10-26 11:22:11,845 - INFO - 1 change detected
+2025-10-26 11:22:12,249 - INFO - 1 change detected
+2025-10-26 11:22:12,654 - INFO - 1 change detected
+2025-10-26 11:22:13,061 - INFO - 1 change detected
+2025-10-26 11:22:13,466 - INFO - 1 change detected
+2025-10-26 11:22:13,822 - INFO - 1 change detected
+2025-10-26 11:22:14,231 - INFO - 1 change detected
+2025-10-26 11:22:14,635 - INFO - 1 change detected
+2025-10-26 11:22:15,095 - INFO - 1 change detected
+2025-10-26 11:22:15,461 - INFO - 1 change detected
+2025-10-26 11:22:15,871 - INFO - 1 change detected
+2025-10-26 11:22:16,277 - INFO - 1 change detected
+2025-10-26 11:22:16,733 - INFO - 1 change detected
+2025-10-26 11:22:17,137 - INFO - 1 change detected
+2025-10-26 11:22:17,542 - INFO - 1 change detected
+2025-10-26 11:22:17,961 - INFO - 1 change detected
+2025-10-26 11:22:18,379 - INFO - 1 change detected
+2025-10-26 11:22:18,783 - INFO - 1 change detected
+2025-10-26 11:22:19,143 - INFO - 1 change detected
+2025-10-26 11:22:19,552 - INFO - 1 change detected
+2025-10-26 11:22:19,958 - INFO - 1 change detected
+2025-10-26 11:22:20,363 - INFO - 1 change detected
+2025-10-26 11:22:20,769 - INFO - 1 change detected
+2025-10-26 11:22:21,174 - INFO - 1 change detected
+2025-10-26 11:22:21,580 - INFO - 1 change detected
+2025-10-26 11:22:21,986 - INFO - 1 change detected
+2025-10-26 11:22:22,391 - INFO - 1 change detected
+2025-10-26 11:22:22,799 - INFO - 1 change detected
+2025-10-26 11:22:23,203 - INFO - 1 change detected
+2025-10-26 11:22:23,561 - INFO - 1 change detected
+2025-10-26 11:22:23,972 - INFO - 1 change detected
+2025-10-26 11:22:24,379 - INFO - 1 change detected
+2025-10-26 11:22:24,782 - INFO - 1 change detected
+2025-10-26 11:22:25,187 - INFO - 1 change detected
+2025-10-26 11:22:25,593 - INFO - 1 change detected
+2025-10-26 11:22:25,998 - INFO - 1 change detected
+2025-10-26 11:22:26,403 - INFO - 1 change detected
+2025-10-26 11:22:26,811 - INFO - 1 change detected
+2025-10-26 11:22:27,225 - INFO - 1 change detected
+2025-10-26 11:22:27,630 - INFO - 1 change detected
+2025-10-26 11:22:28,036 - INFO - 1 change detected
+2025-10-26 11:22:28,444 - INFO - 1 change detected
+2025-10-26 11:22:28,848 - INFO - 1 change detected
+2025-10-26 11:22:29,258 - INFO - 1 change detected
+2025-10-26 11:22:29,614 - INFO - 1 change detected
+2025-10-26 11:22:30,027 - INFO - 1 change detected
+2025-10-26 11:22:30,435 - INFO - 1 change detected
+2025-10-26 11:22:30,843 - INFO - 1 change detected
+2025-10-26 11:22:31,248 - INFO - 1 change detected
+2025-10-26 11:22:31,662 - INFO - 1 change detected
+2025-10-26 11:22:32,067 - INFO - 1 change detected
+2025-10-26 11:22:32,474 - INFO - 1 change detected
+2025-10-26 11:22:53,398 - INFO - Database initialized successfully
+2025-10-26 11:22:53,399 - INFO - Database initialized successfully
+2025-10-26 11:22:53,399 - INFO - All configuration validated successfully
+2025-10-26 11:22:53,400 - INFO - AI Interview Caller service started successfully
+2025-10-26 11:22:53,400 - INFO - Webhook URL: https://a6a68ae5b6f4.ngrok-free.app
+2025-10-26 11:22:53,401 - INFO - Candidate: John Doe (+91 7975091087)
+2025-10-26 11:23:07,534 - INFO - Initiating call to +91 7975091087
+2025-10-26 11:23:07,534 - INFO - Using webhook: https://a6a68ae5b6f4.ngrok-free.app/twilio-voice
+2025-10-26 11:23:07,699 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:23:07,699 - INFO - GET Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b.json
+2025-10-26 11:23:07,701 - INFO - Headers:
+2025-10-26 11:23:07,701 - INFO - Accept : application/json
+2025-10-26 11:23:07,701 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:23:07,702 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:23:07,702 - INFO - Accept-Charset : utf-8
+2025-10-26 11:23:07,702 - INFO - -- END Twilio API Request --
+2025-10-26 11:23:11,543 - INFO - Response Status Code: 200
+2025-10-26 11:23:11,544 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '532', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:53:09 GMT', 'Content-Encoding': 'gzip', 'ETag': '45f0efa5a53f767af67a94a93a7f620b--gzip', 'Last-Modified': 'Wed, 03 Sep 2025 15:31:19 +0000', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQ31dcde57faf2cf11515aed68f0d36bf7', 'Twilio-Request-Duration': '0.032', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'Vary': 'Accept-Encoding, Origin', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 e298dbeec0761926a898e5976abbf698.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'uP-dXSZeFLZmfMAlARlSeT4wTutYdiGrQfYuJ1JE9W1vgOE6mkY6Rw==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none'}
+2025-10-26 11:23:11,544 - INFO - Twilio account validated: My first Twilio account
+2025-10-26 11:23:11,545 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:23:11,546 - INFO - POST Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b/Calls.json
+2025-10-26 11:23:11,547 - INFO - Headers:
+2025-10-26 11:23:11,547 - INFO - Content-Type : application/x-www-form-urlencoded
+2025-10-26 11:23:11,548 - INFO - Accept : application/json
+2025-10-26 11:23:11,548 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:23:11,549 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:23:11,550 - INFO - Accept-Charset : utf-8
+2025-10-26 11:23:11,550 - INFO - -- END Twilio API Request --
+2025-10-26 11:23:12,417 - INFO - Response Status Code: 201
+2025-10-26 11:23:12,417 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '2011', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:53:12 GMT', 'Location': 'https://call-service.us1.svc.twilio.com/v2/Accounts/CA2a2f7da1b9780f3bf40607e277387b76', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQ006c84b78df5e3ef8871c8ab3c9ac14d', 'Twilio-Request-Duration': '0.092', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 e298dbeec0761926a898e5976abbf698.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'Ao5qv25G04-AkFEuVN_f6Hc3iE29K9LUrZ7YvTIZyFJP5Mwfs6G1qw==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none', 'Vary': 'Origin'}
+2025-10-26 11:23:12,419 - INFO - Call initiated successfully - Call ID: CA2a2f7da1b9780f3bf40607e277387b76
+2025-10-26 11:23:12,419 - INFO - Initial call status: queued
+2025-10-26 11:23:14,431 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:23:14,431 - INFO - GET Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b/Calls/CA2a2f7da1b9780f3bf40607e277387b76.json
+2025-10-26 11:23:14,431 - INFO - Headers:
+2025-10-26 11:23:14,432 - INFO - Accept : application/json
+2025-10-26 11:23:14,432 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:23:14,434 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:23:14,434 - INFO - Accept-Charset : utf-8
+2025-10-26 11:23:14,435 - INFO - -- END Twilio API Request --
+2025-10-26 11:23:15,368 - INFO - Response Status Code: 200
+2025-10-26 11:23:15,368 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '579', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:53:14 GMT', 'Content-Encoding': 'gzip', 'ETag': '9af13422a666d7d067b54535c2bddfa1--gzip', 'Last-Modified': '2025-10-26T05:53:13.000Z', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQdb75850aa8794eaf4d1928c63235b89e', 'Twilio-Request-Duration': '0.039', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'Vary': 'Accept-Encoding, Origin', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 e298dbeec0761926a898e5976abbf698.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'KmieDQVVx460xQrbpXooNE2X9PsV3VnBB0EW3-aqPiMDwEEGLMfE1A==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none'}
+2025-10-26 11:23:15,370 - INFO - Updated call status: ringing
+2025-10-26 11:24:05,931 - INFO - Initiating call to +91 7975091087
+2025-10-26 11:24:05,932 - INFO - Using webhook: https://a6a68ae5b6f4.ngrok-free.app/twilio-voice
+2025-10-26 11:24:05,933 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:24:05,933 - INFO - GET Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b.json
+2025-10-26 11:24:05,934 - INFO - Headers:
+2025-10-26 11:24:05,935 - INFO - Accept : application/json
+2025-10-26 11:24:05,935 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:24:05,936 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:24:05,936 - INFO - Accept-Charset : utf-8
+2025-10-26 11:24:05,937 - INFO - -- END Twilio API Request --
+2025-10-26 11:24:07,199 - INFO - Response Status Code: 200
+2025-10-26 11:24:07,199 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '532', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:54:06 GMT', 'Content-Encoding': 'gzip', 'ETag': '45f0efa5a53f767af67a94a93a7f620b--gzip', 'Last-Modified': 'Wed, 03 Sep 2025 15:31:19 +0000', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQcf7a9c3585c3f9c0395831bd3c2f8f2b', 'Twilio-Request-Duration': '0.024', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'Vary': 'Accept-Encoding, Origin', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 70288d87e81671367169a644ce53bb9c.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': '0YkmWSg9F3hIoVLPr17gyT_iTMCUi8ZDkMjtqCQlKWsAOTOOT3qXYQ==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none'}
+2025-10-26 11:24:07,200 - INFO - Twilio account validated: My first Twilio account
+2025-10-26 11:24:07,201 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:24:07,202 - INFO - POST Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b/Calls.json
+2025-10-26 11:24:07,202 - INFO - Headers:
+2025-10-26 11:24:07,203 - INFO - Content-Type : application/x-www-form-urlencoded
+2025-10-26 11:24:07,204 - INFO - Accept : application/json
+2025-10-26 11:24:07,204 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:24:07,205 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:24:07,205 - INFO - Accept-Charset : utf-8
+2025-10-26 11:24:07,206 - INFO - -- END Twilio API Request --
+2025-10-26 11:24:08,189 - INFO - Response Status Code: 201
+2025-10-26 11:24:08,191 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '2011', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:54:07 GMT', 'Location': 'https://call-service.us1.svc.twilio.com/v2/Accounts/CAb1cebd38430d0c8262fd7d3a33bdf2e8', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQ2083d8fba8b6dc0a94cd07f7b2d06001', 'Twilio-Request-Duration': '0.073', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 70288d87e81671367169a644ce53bb9c.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'C07vD9-yKdEV42yBAbbJEG5PSJ29dAow8ex8Qz3czDUhsmm_fsQDOg==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none', 'Vary': 'Origin'}
+2025-10-26 11:24:08,191 - INFO - Call initiated successfully - Call ID: CAb1cebd38430d0c8262fd7d3a33bdf2e8
+2025-10-26 11:24:08,192 - INFO - Initial call status: queued
+2025-10-26 11:24:10,194 - INFO - -- BEGIN Twilio API Request --
+2025-10-26 11:24:10,194 - INFO - GET Request: https://api.twilio.com/2010-04-01/Accounts/ACd18cee434e47477666ed0e2b6300fa6b/Calls/CAb1cebd38430d0c8262fd7d3a33bdf2e8.json
+2025-10-26 11:24:10,195 - INFO - Headers:
+2025-10-26 11:24:10,196 - INFO - Accept : application/json
+2025-10-26 11:24:10,196 - INFO - User-Agent : twilio-python/9.7.2 (Windows AMD64) Python/3.10.11
+2025-10-26 11:24:10,197 - INFO - X-Twilio-Client : python-9.7.2
+2025-10-26 11:24:10,198 - INFO - Accept-Charset : utf-8
+2025-10-26 11:24:10,198 - INFO - -- END Twilio API Request --
+2025-10-26 11:24:11,060 - INFO - Response Status Code: 200
+2025-10-26 11:24:11,060 - INFO - Response Headers: {'Content-Type': 'application/json;charset=utf-8', 'Content-Length': '578', 'Connection': 'keep-alive', 'Date': 'Sun, 26 Oct 2025 05:54:10 GMT', 'Content-Encoding': 'gzip', 'ETag': '2a3101b085dc552fefaa18e756390127--gzip', 'Last-Modified': '2025-10-26T05:54:08.000Z', 'Twilio-Concurrent-Requests': '1', 'Twilio-Request-Id': 'RQ67fee75705c0aaef6bf48eb31a183c70', 'Twilio-Request-Duration': '0.042', 'X-Home-Region': 'us1', 'X-API-Domain': 'api.twilio.com', 'Strict-Transport-Security': 'max-age=31536000', 'Vary': 'Accept-Encoding, Origin', 'X-Cache': 'Miss from cloudfront', 'Via': '1.1 70288d87e81671367169a644ce53bb9c.cloudfront.net (CloudFront)', 'X-Amz-Cf-Pop': 'BLR50-P3', 'X-Amz-Cf-Id': 'q-bgVUhOIeTghaKuscjz5aK2s3_-80JyLWtGh8TD-qERfuHphUNT8Q==', 'X-Powered-By': 'AT-5000', 'X-Shenanigans': 'none'}
+2025-10-26 11:24:11,061 - INFO - Updated call status: ringing
