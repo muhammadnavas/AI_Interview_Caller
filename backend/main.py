@@ -12,14 +12,11 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import logging
 
-# Configure logging
+# Configure logging: stream to stdout so Render captures logs (avoid writing files in container)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('conversation.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
@@ -68,7 +65,7 @@ def get_webhook_url():
     print(f"Using configured URL: {configured_url}")
     return configured_url
 
-WEBHOOK_BASE_URL = get_webhook_url()
+WEBHOOK_BASE_URL = get_webhook_url().rstrip('/')
 
 # FastAPI app
 app = FastAPI(title="AI Interview Caller", description="Automated interview scheduling with conversation tracking")
@@ -107,9 +104,16 @@ async def startup_event():
         raise
 
 # CORS
+# Configure CORS using environment variable ALLOWED_ORIGINS (comma-separated)
+allowed_origins_raw = config("ALLOWED_ORIGINS", default="*")
+if allowed_origins_raw.strip() == "*":
+    allow_origins = ["*"]
+else:
+    allow_origins = [o.strip() for o in allowed_origins_raw.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

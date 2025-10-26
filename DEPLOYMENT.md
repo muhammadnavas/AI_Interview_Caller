@@ -42,6 +42,13 @@ Vercel — deploy the frontend
    - Vercel auto-detects Next.js and will use `npm run build` and `npm run start`.
 2) Set environment variables (Project Settings > Environment Variables)
    - NEXT_PUBLIC_API_URL = https://<your-backend>.onrender.com  # the Render backend URL
+      - NEXT_PUBLIC_API_BASE = https://ai-interview-caller-wz24.onrender.com  # the Render backend URL (example)
+
+   Set CORS / Allowed origins on the backend
+      - In Render service settings add environment variable:
+      - Name: ALLOWED_ORIGINS
+      - Value: https://ai-interview-caller.vercel.app  # your Vercel frontend URL (comma-separated list if more)
+      This value is read by the backend and used to restrict CORS in production. Use "*" for open (not recommended).
    - (Do NOT put sensitive keys here unless necessary; Twilio/OpenAI should remain in backend only.)
 3) Build & preview
    - Push a commit to `main` (or the branch linked to Vercel). Vercel will run the build and deploy automatically.
