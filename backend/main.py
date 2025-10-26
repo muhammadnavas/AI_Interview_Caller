@@ -7,7 +7,6 @@ import uvicorn
 import re
 import json
 import sqlite3
-from pymongo import MongoClient
 from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
@@ -115,6 +114,13 @@ def load_candidate_from_mongo() -> dict | None:
     Returns a dict with keys: name, phone, email, position, company or None on failure/not found.
     """
     try:
+        # Import locally so the app can still start even if pymongo isn't installed yet
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            logger.warning("pymongo not installed; skipping MongoDB candidate load")
+            return None
+
         mongodb_uri = config("MONGODB_URI", default=None)
         if not mongodb_uri:
             return None
