@@ -37,7 +37,16 @@ TWILIO_PHONE_NUMBER = config("TWILIO_PHONE_NUMBER", default="")
 
 # OpenAI
 OPENAI_API_KEY = config("OPENAI_API_KEY", default="")
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+# Initialize OpenAI client lazily and defensively to avoid import-time crashes
+openai_client = None
+if OPENAI_API_KEY:
+    try:
+        openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        logger.info("OpenAI client initialized")
+    except Exception as e:
+        # Don't crash the whole app if OpenAI/httpx versions are incompatible or misconfigured
+        logger.warning(f"Failed to initialize OpenAI client: {e}")
+        openai_client = None
 
 # Webhook URL - Auto-detect ngrok or use config
 def get_webhook_url():
