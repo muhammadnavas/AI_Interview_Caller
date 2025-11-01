@@ -510,18 +510,12 @@ async def test_webhook():
     return {"status": "OK", "message": "Webhook endpoint is accessible"}
 
 @app.post("/twilio-voice")
-async def twilio_voice(request: Request):
-    """Entry point for Twilio call - simplified for testing"""
-    # Log to console and file
-    print("=== TWILIO WEBHOOK CALLED ===")
-    logger.info("=== TWILIO WEBHOOK CALLED ===")
-    
-    # Return bare minimum TwiML
-    twiml = "<Response><Say>Hello</Say><Hangup/></Response>"
-    print(f"Returning TwiML: {twiml}")
-    logger.info(f"Returning TwiML: {twiml}")
-    
-    return Response(content=twiml, media_type="text/xml")
+async def twilio_voice():
+    """Ultra-simple Twilio webhook"""
+    return Response(
+        content="<Response><Say>Hello from AI Interview Caller</Say><Hangup/></Response>", 
+        media_type="text/xml"
+    )
 
 @app.post("/twilio-process")
 async def process_speech(request: Request):
