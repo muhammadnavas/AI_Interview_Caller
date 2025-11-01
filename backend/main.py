@@ -504,18 +504,52 @@ Guidelines:
         logger.error(f"AI response generation failed: {e}")
         return f"Thank you. Are you available for an interview on {TIME_SLOTS[0]}? Please say 'confirm' if yes."
 
-@app.get("/test-webhook")
+@app.get("/test-webhook") 
 async def test_webhook():
     """Test endpoint to verify app is working"""
-    return {"status": "OK", "message": "Webhook endpoint is accessible"}
+    return {"status": "OK", "message": "Webhook endpoint is accessible", "webhook_url": f"{WEBHOOK_BASE_URL}/twilio-voice"}
+
+@app.get("/twilio-voice")
+async def twilio_voice_get():
+    """GET endpoint for webhook verification"""
+    return {"message": "Twilio webhook endpoint is ready", "method": "POST required for actual calls"}
 
 @app.post("/twilio-voice")
-async def twilio_voice():
-    """Ultra-simple Twilio webhook"""
-    return Response(
-        content="<Response><Say>Hello from AI Interview Caller</Say><Hangup/></Response>", 
-        media_type="text/xml"
-    )
+async def twilio_voice(request: Request):
+    """Twilio webhook endpoint with proper headers and logging"""
+    try:
+        # Log the incoming request for debugging
+        print(f"🔊 TWILIO WEBHOOK CALLED from IP: {request.client.host if request.client else 'unknown'}")
+        
+        # Get form data from Twilio
+        form_data = await request.form()
+        call_sid = form_data.get("CallSid", "unknown")
+        from_number = form_data.get("From", "unknown")
+        to_number = form_data.get("To", "unknown")
+        
+        print(f"📞 Call Details: SID={call_sid}, From={from_number}, To={to_number}")
+        
+        # Return proper TwiML with correct headers
+        twiml_response = "<?xml version='1.0' encoding='UTF-8'?><Response><Say voice='alice'>Hello! This is AI Interview Scheduler. The call is working successfully. Goodbye!</Say><Hangup/></Response>"
+        
+        print(f"✅ Returning TwiML: {twiml_response}")
+        
+        return Response(
+            content=twiml_response,
+            media_type="application/xml; charset=utf-8",
+            headers={
+                "Cache-Control": "no-cache",
+                "Content-Type": "application/xml; charset=utf-8"
+            }
+        )
+    except Exception as e:
+        print(f"❌ ERROR in webhook: {e}")
+        # Return error TwiML
+        error_twiml = "<?xml version='1.0' encoding='UTF-8'?><Response><Say voice='alice'>Sorry, there was an error. Please try again later.</Say><Hangup/></Response>"
+        return Response(
+            content=error_twiml,
+            media_type="application/xml; charset=utf-8"
+        )
 
 @app.post("/twilio-process")
 async def process_speech(request: Request):
