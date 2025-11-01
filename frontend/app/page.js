@@ -130,16 +130,16 @@ export default function Home() {
 											<div className="bg-gray-50 p-4 rounded">
 												<h3 className="font-semibold mb-2">Candidate Information</h3>
 												<p>
-													<strong>Name:</strong> {systemStatus.candidate.name}
+													<strong>Name:</strong> {systemStatus.candidate?.name || 'Not loaded'}
 												</p>
 												<p>
-													<strong>Phone:</strong> {systemStatus.candidate.phone}
+													<strong>Phone:</strong> {systemStatus.candidate?.phone || 'Not loaded'}
 												</p>
 												<p>
-													<strong>Position:</strong> {systemStatus.candidate.position}
+													<strong>Position:</strong> {systemStatus.candidate?.position || 'Not loaded'}
 												</p>
 												<p>
-													<strong>Company:</strong> {systemStatus.candidate.company}
+													<strong>Company:</strong> {systemStatus.candidate?.company || 'Not loaded'}
 												</p>
 											</div>
 											<div className="bg-gray-50 p-4 rounded">
