@@ -161,6 +161,45 @@ def load_candidate_from_mongo() -> dict | None:
         return None
 
 
+def get_all_candidates_from_mongo() -> list:
+    """Get all candidates from MongoDB for selection."""
+    try:
+        from pymongo import MongoClient
+        
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return []
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+
+        db = client[db_name]
+        coll = db[coll_name]
+
+        docs = list(coll.find())
+        candidates = []
+        
+        for doc in docs:
+            candidate = {
+                "id": str(doc.get("_id")),
+                "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
+                "phone": doc.get("phone") or doc.get("phone_number"),
+                "email": doc.get("email"),
+                "position": doc.get("position") or doc.get("role"),
+                "company": doc.get("company") or doc.get("employer"),
+            }
+            # Only add candidates with valid phone numbers
+            if candidate["phone"] and candidate["phone"].startswith("+"):
+                candidates.append(candidate)
+        
+        return candidates
+        
+    except Exception as e:
+        logger.warning(f"Could not load candidates from MongoDB: {e}")
+        return []
+
+
 # Prefer candidate from MongoDB when available, fall back to env vars
 mongo_candidate = load_candidate_from_mongo()
 if mongo_candidate:
@@ -440,15 +479,22 @@ def find_mentioned_time_slot(text: str, available_slots: List[str]) -> Optional[
     return None
 
 def get_ai_greeting(candidate: Optional[dict] = None) -> str:
-    """Get AI greeting message. Use provided candidate dict or fall back to global CANDIDATE."""
+    """Get professional AI greeting message."""
     c = candidate or CANDIDATE
-    name = c.get('name') if isinstance(c, dict) else 'Candidate'
-    greeting = f"Hello {name}, this is a test call from AI Interview Scheduler."
+    name = c.get('name', 'there') if isinstance(c, dict) else 'there'
+    position = c.get('position', 'the position') if isinstance(c, dict) else 'the position'
+    company = c.get('company', 'our company') if isinstance(c, dict) else 'our company'
+    
+    # First name only for more natural conversation
+    first_name = name.split()[0] if name and name != 'there' else name
+    
+    greeting = f"Hello {first_name}! This is Sarah from {company}'s talent acquisition team. I'm calling regarding your application for the {position} position. I hope I'm catching you at a good time for a quick interview scheduling call."
     return greeting
 
 def generate_ai_response(session: ConversationSession, user_input: str, intent: str, confidence: float) -> str:
     """Generate appropriate AI response based on conversation context and intent"""
     turn_count = len(session.turns)
+    candidate = session.candidate or CANDIDATE
     
     try:
         if openai_client:
@@ -456,22 +502,29 @@ def generate_ai_response(session: ConversationSession, user_input: str, intent: 
             context_messages = []
             context_messages.append({
                 "role": "system", 
-                "content": f"""You are a professional recruiter scheduling an interview for {CANDIDATE['name']} for a {CANDIDATE['position']} position at {CANDIDATE['company']}. 
+                "content": f"""You are Sarah, a professional talent acquisition specialist from {candidate.get('company', 'the company')} scheduling an interview with {candidate.get('name', 'the candidate')} for a {candidate.get('position', 'Software Engineer')} position.
 
-Available time slots: {', '.join(TIME_SLOTS)}
+Available interview time slots: {', '.join(TIME_SLOTS)}
 
 Conversation context:
 - Turn count: {turn_count + 1}
 - Detected intent: {intent} (confidence: {confidence:.2f})
 - Current status: {session.status}
 
-Guidelines:
-1. Be professional but friendly
-2. Keep responses under 25 words
-3. Guide towards slot confirmation
-4. If intent is unclear after 2 turns, list available slots clearly
-5. If rejection detected, offer alternatives
-6. Confirm and end call when confirmation detected"""
+Professional Guidelines:
+1. Maintain a warm, professional tone
+2. Keep responses concise (20-30 words max)
+3. Use "we" and "our team" language
+4. Guide naturally toward time slot selection
+5. Show enthusiasm about their candidacy
+6. Be flexible and accommodating
+7. Always end positively
+
+Response patterns:
+- Confirmation: Express excitement, confirm details, mention next steps
+- Rejection: Show understanding, offer alternatives professionally  
+- Unclear: Gently clarify without being repetitive
+- Time mention: Acknowledge their preference and work with it"""
             })
             
             # Add conversation history for context
@@ -490,19 +543,22 @@ Guidelines:
             )
             return response.choices[0].message.content.strip()
         else:
-            # Fallback responses when OpenAI is not available
+            # Professional fallback responses when OpenAI is not available
+            candidate_name = candidate.get('name', '').split()[0] if candidate.get('name') else ''
+            
             if intent == "confirmation":
-                return f"Perfect! Let me confirm your interview for {TIME_SLOTS[0]}. Is that correct?"
+                return f"Excellent, {candidate_name}! I'll send you a calendar invite for {TIME_SLOTS[0]}. Our team is excited to meet you!"
             elif intent == "rejection":
-                return f"I understand. We have these other slots: {', '.join(TIME_SLOTS[1:])}. Any of these work?"
+                return f"No problem at all, {candidate_name}. We have these alternatives: {', '.join(TIME_SLOTS[1:])}. Would any of these work better for you?"
             elif turn_count >= 2:
-                return f"Let me be clear. Available slots: {', '.join(TIME_SLOTS)}. Please say 'confirm' and your preferred time."
+                return f"Let me share our available interview slots: {', '.join(TIME_SLOTS)}. Which time works best for your schedule?"
             else:
-                return f"Great! Are you available for an interview on {TIME_SLOTS[0]}? Please say 'confirm' if yes."
+                return f"Wonderful! Would {TIME_SLOTS[0]} work for your interview? We're very excited about your application."
                 
     except Exception as e:
         logger.error(f"AI response generation failed: {e}")
-        return f"Thank you. Are you available for an interview on {TIME_SLOTS[0]}? Please say 'confirm' if yes."
+        candidate_name = candidate.get('name', '').split()[0] if candidate.get('name') else ''
+        return f"Thank you, {candidate_name}. Would {TIME_SLOTS[0]} work for your interview? Please let me know if that suits your schedule."
 
 @app.get("/test-webhook") 
 async def test_webhook():
@@ -515,34 +571,208 @@ async def twilio_voice_get():
     return {"message": "Twilio webhook endpoint is ready", "method": "POST required for actual calls"}
 
 @app.post("/twilio-voice")
-def twilio_voice():
+async def twilio_voice(request: Request):
     """AI Interview Scheduler - Main webhook for incoming calls"""
-    # Create session and get greeting
-    greeting = get_ai_greeting()
-    
-    # Generate TwiML with conversation flow
-    twiml = f"""<Response>
-        <Say voice="alice">{greeting}</Say>
-        <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="auto">
-            <Say voice="alice">Please let me know if any of these times work for you: Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM.</Say>
-        </Gather>
-        <Say voice="alice">Thank you. We'll follow up by email with the details.</Say>
-        <Hangup/>
-    </Response>"""
-    
-    return Response(content=twiml, media_type="text/xml")
+    try:
+        # Parse Twilio webhook data
+        form_data = await request.form()
+        call_sid = form_data.get("CallSid", "unknown")
+        from_number = form_data.get("From", "")
+        to_number = form_data.get("To", "")
+        call_status = form_data.get("CallStatus", "")
+        
+        logger.info(f"Incoming call - CallSid: {call_sid}, From: {from_number}, To: {to_number}, Status: {call_status}")
+        
+        # Create or get session for this call
+        session = get_or_create_session(call_sid, from_number)
+        
+        # Get appropriate greeting based on candidate data
+        greeting = get_ai_greeting(session.candidate)
+        
+        # Log initial turn
+        initial_turn = ConversationTurn(
+            turn_number=1,
+            candidate_input=f"[CALL INITIATED] From: {from_number}",
+            ai_response=greeting,
+            timestamp=datetime.now().isoformat(),
+            intent_detected="call_start",
+            confidence_score=1.0
+        )
+        session.turns.append(initial_turn)
+        save_conversation_session(session)
+        
+        # Generate TwiML with conversation flow
+        twiml = f"""<Response>
+            <Say voice="alice">{html.escape(greeting)}</Say>
+            <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="auto">
+                <Say voice="alice">Please let me know if any of these times work for you: Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM.</Say>
+            </Gather>
+            <Say voice="alice">Thank you. We'll follow up by email with the details.</Say>
+            <Hangup/>
+        </Response>"""
+        
+        logger.info(f"Generated initial TwiML for call {call_sid}")
+        return Response(content=twiml, media_type="text/xml")
+        
+    except Exception as e:
+        logger.error(f"Error in twilio_voice webhook: {e}")
+        # Return basic TwiML even on error
+        error_twiml = """<Response>
+            <Say voice="alice">Hello! This is AI Interview Scheduler. We're experiencing technical difficulties. We'll follow up by email. Goodbye!</Say>
+            <Hangup/>
+        </Response>"""
+        return Response(content=error_twiml, media_type="text/xml")
 
 @app.post("/twilio-process")
-def process_speech():
-    """Process candidate speech response"""
-    # Simple confirmation response
-    twiml = f"""<Response>
-        <Say voice="alice">Great! I heard your response. Your interview slot has been noted. We'll send you a calendar invite shortly.</Say>
-        <Say voice="alice">Thank you for using AI Interview Scheduler. Have a great day!</Say>
-        <Hangup/>
-    </Response>"""
-    
-    return Response(content=twiml, media_type="text/xml")
+async def process_speech(request: Request):
+    """Process candidate speech response with full conversation tracking"""
+    try:
+        # Parse Twilio webhook data
+        form_data = await request.form()
+        call_sid = form_data.get("CallSid", "unknown")
+        speech_result = form_data.get("SpeechResult", "").strip()
+        confidence = float(form_data.get("Confidence", "0.0"))
+        
+        logger.info(f"Speech received - CallSid: {call_sid}, Speech: '{speech_result}', Confidence: {confidence}")
+        
+        # Handle empty or low confidence speech
+        if not speech_result or len(speech_result) < 3 or confidence < 0.3:
+            logger.warning(f"Empty or low confidence speech: '{speech_result}' (confidence: {confidence})")
+            
+            # Generate retry TwiML
+            retry_twiml = f"""<Response>
+                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="auto">
+                    <Say voice="alice">I'm sorry, I didn't catch that clearly. Could you please repeat which time works for you? Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM?</Say>
+                </Gather>
+                <Say voice="alice">Thank you. We'll follow up by email with the details.</Say>
+                <Hangup/>
+            </Response>"""
+            return Response(content=retry_twiml, media_type="text/xml")
+        
+        # Get or create session
+        session = conversation_sessions.get(call_sid)
+        if not session:
+            logger.warning(f"Session not found for CallSid: {call_sid}, creating new session")
+            session = get_or_create_session(call_sid, form_data.get("From", ""))
+        
+        # Analyze user intent
+        intent, intent_confidence = analyze_intent(speech_result)
+        turn_number = len(session.turns) + 1
+        
+        logger.info(f"Turn #{turn_number} - Intent: {intent} (confidence: {intent_confidence:.2f})")
+        
+        # Prevent infinite loops - max 6 turns
+        if turn_number > 6:
+            ai_response = "Thank you for your time. Due to call length limits, we'll follow up by email with scheduling options. Goodbye."
+            session.status = "failed"
+            session.end_time = datetime.now().isoformat()
+            
+            # Record final turn
+            turn = ConversationTurn(
+                turn_number=turn_number,
+                candidate_input=speech_result,
+                ai_response=ai_response,
+                timestamp=datetime.now().isoformat(),
+                intent_detected=intent,
+                confidence_score=intent_confidence
+            )
+            session.turns.append(turn)
+            save_conversation_session(session)
+            
+            return Response(
+                content=f"<Response><Say voice='alice'>{html.escape(ai_response)}</Say><Hangup/></Response>",
+                media_type="text/xml"
+            )
+        
+        # Handle confirmation intent
+        if intent == "confirmation" and intent_confidence > 0.6:
+            # Find mentioned time slot or use first available
+            mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
+            confirmed_slot = mentioned_slot or TIME_SLOTS[0]
+            
+            session.confirmed_slot = confirmed_slot
+            session.status = "completed"
+            session.end_time = datetime.now().isoformat()
+            
+            ai_response = f"Perfect! Your interview is confirmed for {confirmed_slot}. We'll send you a calendar invite. Thank you!"
+            
+            # Record final turn
+            turn = ConversationTurn(
+                turn_number=turn_number,
+                candidate_input=speech_result,
+                ai_response=ai_response,
+                timestamp=datetime.now().isoformat(),
+                intent_detected=intent,
+                confidence_score=intent_confidence
+            )
+            session.turns.append(turn)
+            save_conversation_session(session)
+            
+            logger.info(f"CONFIRMATION DETECTED! Confirmed slot: {confirmed_slot} - Call completed in {turn_number} turns")
+            
+            confirmation_twiml = f"<Response><Say voice='alice'>{html.escape(ai_response)}</Say><Hangup/></Response>"
+            return Response(content=confirmation_twiml, media_type="text/xml")
+        
+        # Handle rejection or request for different time
+        elif intent == "rejection":
+            if turn_number >= 3:
+                ai_response = "I understand. We'll follow up by email with alternative options. Thank you for your time."
+                session.status = "failed"
+                session.end_time = datetime.now().isoformat()
+            else:
+                ai_response = f"I understand. We have these other slots available: {', '.join(TIME_SLOTS[1:])}. Would any of these work for you?"
+        
+        # Too many unclear interactions - provide guidance
+        elif turn_number >= 4:
+            ai_response = f"Let me be clear about our available times: {', '.join(TIME_SLOTS)}. Please say 'yes' or 'confirm' followed by your preferred time."
+            
+            if turn_number >= 5:
+                ai_response = "Thank you for your time. We'll follow up by email with scheduling options. Goodbye."
+                session.status = "failed"
+                session.end_time = datetime.now().isoformat()
+        
+        # Generate contextual AI response for other cases
+        else:
+            ai_response = generate_ai_response(session, speech_result, intent, intent_confidence)
+        
+        # Record conversation turn
+        turn = ConversationTurn(
+            turn_number=turn_number,
+            candidate_input=speech_result,
+            ai_response=ai_response,
+            timestamp=datetime.now().isoformat(),
+            intent_detected=intent,
+            confidence_score=intent_confidence
+        )
+        session.turns.append(turn)
+        save_conversation_session(session)
+        
+        logger.info(f"AI response: '{ai_response}'")
+        
+        # Generate appropriate TwiML response
+        if session.status in ["completed", "failed"]:
+            # Call should end
+            final_twiml = f"<Response><Say voice='alice'>{html.escape(ai_response)}</Say><Hangup/></Response>"
+            return Response(content=final_twiml, media_type="text/xml")
+        else:
+            # Continue conversation
+            continue_twiml = f"""<Response>
+                <Say voice="alice">{html.escape(ai_response)}</Say>
+                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="auto">
+                    <Say voice="alice">Please let me know which time works best for you.</Say>
+                </Gather>
+                <Say voice="alice">Thank you. We'll send you an email with the details.</Say>
+                <Hangup/>
+            </Response>"""
+            return Response(content=continue_twiml, media_type="text/xml")
+        
+    except Exception as e:
+        logger.error(f"Error in process_speech endpoint: {e}")
+        error_twiml = """<Response>
+            <Say voice='alice'>Sorry, there was a system error. We'll follow up by email. Goodbye.</Say>
+            <Hangup/>
+        </Response>"""
+        return Response(content=error_twiml, media_type="text/xml")
 
 # This section was corrupted and has been removed
 
@@ -691,6 +921,162 @@ async def make_actual_call(request: Request):
                 "suggestion": "Check your Twilio console for more details"
             }
 
+@app.get("/candidates")
+async def get_candidates():
+    """Get all candidates from MongoDB"""
+    try:
+        candidates = get_all_candidates_from_mongo()
+        
+        return {
+            "candidates": candidates,
+            "total": len(candidates),
+            "status": "success"
+        }
+    except Exception as e:
+        logger.error(f"Error fetching candidates: {e}")
+        return {
+            "error": str(e),
+            "candidates": [],
+            "total": 0,
+            "status": "error"
+        }
+
+@app.post("/call-candidate")
+async def call_specific_candidate(request: Request):
+    """Make a professional call to a specific candidate by ID"""
+    try:
+        # Get candidate ID from request body
+        body = await request.json()
+        candidate_id = body.get("candidate_id")
+        
+        if not candidate_id:
+            return {
+                "status": "error",
+                "message": "candidate_id is required"
+            }
+        
+        # Validate Twilio credentials
+        missing_creds = []
+        if not TWILIO_ACCOUNT_SID:
+            missing_creds.append("TWILIO_ACCOUNT_SID")
+        if not TWILIO_AUTH_TOKEN:
+            missing_creds.append("TWILIO_AUTH_TOKEN")
+        if not TWILIO_PHONE_NUMBER:
+            missing_creds.append("TWILIO_PHONE_NUMBER")
+        
+        if missing_creds:
+            return {
+                "status": "error", 
+                "message": f"Missing Twilio credentials: {', '.join(missing_creds)}. Check your .env file."
+            }
+        
+        # Load candidate from MongoDB
+        candidate_info = fetch_candidate_by_id(candidate_id)
+        if not candidate_info:
+            return {
+                "status": "error",
+                "message": f"Candidate not found with ID: {candidate_id}"
+            }
+        
+        if not candidate_info.get("phone") or not candidate_info.get("phone").startswith("+"):
+            return {
+                "status": "error",
+                "message": f"Invalid phone number for candidate: {candidate_info.get('phone')}"
+            }
+        
+        webhook_url = f"{WEBHOOK_BASE_URL}/twilio-voice"
+        
+        # Check if webhook URL is publicly accessible
+        if "localhost" in WEBHOOK_BASE_URL or "127.0.0.1" in WEBHOOK_BASE_URL:
+            return {
+                "status": "error", 
+                "message": "Webhook URL must be public. Start ngrok with: ngrok http 8000",
+                "suggestion": "Run 'ngrok http 8000' in a separate terminal to create a public tunnel"
+            }
+        
+        logger.info(f"Initiating professional interview call to {candidate_info['name']} ({candidate_info['phone']})")
+        logger.info(f"Position: {candidate_info.get('position')} at {candidate_info.get('company')}")
+        logger.info(f"Using webhook: {webhook_url}")
+        
+        # Initialize Twilio client
+        client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+        
+        # Test credentials
+        try:
+            account = client.api.accounts(TWILIO_ACCOUNT_SID).fetch()
+            logger.info(f"Twilio account validated: {account.friendly_name}")
+        except Exception as cred_error:
+            logger.error(f"Twilio credential validation failed: {cred_error}")
+            return {
+                "status": "error",
+                "message": f"Invalid Twilio credentials: {str(cred_error)}"
+            }
+        
+        # Create the call
+        call = client.calls.create(
+            url=webhook_url,
+            to=candidate_info.get("phone"),
+            from_=TWILIO_PHONE_NUMBER,
+            timeout=30,
+            record=False,
+        )
+
+        logger.info(f"Professional call initiated - Call ID: {call.sid}")
+        
+        # Check initial call status
+        import time
+        time.sleep(2)
+        updated_call = client.calls(call.sid).fetch()
+        
+        if updated_call.status == 'failed':
+            logger.error(f"Call failed. Error: {updated_call.error_message}")
+            return {
+                "status": "error",
+                "message": f"Call failed: {updated_call.error_message}",
+                "error_code": updated_call.error_code,
+                "call_sid": call.sid
+            }
+        
+        # Pre-create session with candidate info
+        session = get_or_create_session(call.sid, candidate_info.get("phone"), candidate=candidate_info)
+
+        return {
+            "status": "success",
+            "message": f"Professional interview call initiated to {candidate_info.get('name')}",
+            "call_sid": call.sid,
+            "call_status": updated_call.status,
+            "candidate": {
+                "name": candidate_info.get("name"),
+                "phone": candidate_info.get("phone"),
+                "email": candidate_info.get("email"),
+                "position": candidate_info.get("position"),
+                "company": candidate_info.get("company")
+            },
+            "webhook_url": webhook_url,
+            "initial_status": call.status
+        }
+        
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"Professional call failed: {error_msg}")
+        
+        if "not a valid phone number" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": f"Invalid phone number format. Use format: +1234567890"
+            }
+        elif "balance" in error_msg.lower():
+            return {
+                "status": "error",
+                "message": "Insufficient Twilio account balance. Please add funds to your Twilio account."
+            }
+        else:
+            return {
+                "status": "error", 
+                "message": f"Call failed: {error_msg}",
+                "suggestion": "Check your Twilio console for more details"
+            }
+
 @app.get("/")
 async def root():
     """Root endpoint with system status"""
@@ -706,6 +1092,64 @@ async def root():
             "database_enabled": True,
         },
     }
+
+@app.get("/recent-conversations")
+async def get_recent_conversations(limit: int = 10):
+    """Get recent conversations with detailed turn information"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT * FROM conversation_sessions 
+            ORDER BY start_time DESC 
+            LIMIT ?
+        ''', (limit,))
+        sessions = cursor.fetchall()
+        
+        result = []
+        for session in sessions:
+            turns = json.loads(session[6]) if session[6] else []
+            
+            # Calculate conversation metrics
+            total_turns = len(turns)
+            duration = None
+            if session[2] and session[3]:  # start_time and end_time
+                try:
+                    start = datetime.fromisoformat(session[2])
+                    end = datetime.fromisoformat(session[3])
+                    duration = str(end - start)
+                except:
+                    pass
+            
+            # Get last AI response and candidate input
+            last_turn = turns[-1] if turns else None
+            
+            session_summary = {
+                "call_sid": session[0],
+                "candidate_phone": session[1],
+                "start_time": session[2],
+                "end_time": session[3],
+                "status": session[4],
+                "confirmed_slot": session[5],
+                "total_turns": total_turns,
+                "duration": duration,
+                "last_candidate_input": last_turn.get("candidate_input") if last_turn else None,
+                "last_ai_response": last_turn.get("ai_response") if last_turn else None,
+                "final_intent": last_turn.get("intent_detected") if last_turn else None,
+                "conversation_turns": turns
+            }
+            result.append(session_summary)
+        
+        conn.close()
+        return {
+            "recent_conversations": result,
+            "total_found": len(result)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error fetching recent conversations: {e}")
+        return {"error": str(e), "recent_conversations": []}
 
 @app.get("/conversations")
 async def get_conversations():
@@ -807,6 +1251,70 @@ async def get_analytics():
     except Exception as e:
         logger.error(f"Error generating analytics: {e}")
         return {"error": str(e)}
+
+@app.get("/live-conversation/{call_sid}")
+async def get_live_conversation_status(call_sid: str):
+    """Get live conversation status for active calls"""
+    try:
+        # Check in-memory sessions first (for active calls)
+        if call_sid in conversation_sessions:
+            session = conversation_sessions[call_sid]
+            
+            # Get Twilio call status if credentials available
+            twilio_status = None
+            if all([TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN]):
+                try:
+                    client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+                    call = client.calls(call_sid).fetch()
+                    twilio_status = {
+                        "status": call.status,
+                        "duration": call.duration,
+                        "direction": call.direction
+                    }
+                except:
+                    pass
+            
+            return {
+                "call_sid": call_sid,
+                "conversation_status": session.status,
+                "current_turn": len(session.turns),
+                "candidate_phone": session.candidate_phone,
+                "start_time": session.start_time,
+                "end_time": session.end_time,
+                "confirmed_slot": session.confirmed_slot,
+                "twilio_status": twilio_status,
+                "recent_turns": [asdict(turn) for turn in session.turns[-3:]],  # Last 3 turns
+                "candidate_info": session.candidate
+            }
+        
+        # If not in memory, check database
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM conversation_sessions WHERE call_sid = ?', (call_sid,))
+        session_data = cursor.fetchone()
+        conn.close()
+        
+        if not session_data:
+            return {"error": "Conversation not found", "call_sid": call_sid}
+        
+        turns = json.loads(session_data[6]) if session_data[6] else []
+        
+        return {
+            "call_sid": call_sid,
+            "conversation_status": session_data[4],  # status
+            "current_turn": len(turns),
+            "candidate_phone": session_data[1],
+            "start_time": session_data[2],
+            "end_time": session_data[3],
+            "confirmed_slot": session_data[5],
+            "twilio_status": None,  # Not available for completed calls
+            "recent_turns": turns[-3:] if turns else [],  # Last 3 turns
+            "candidate_info": None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting live conversation status for {call_sid}: {e}")
+        return {"error": str(e), "call_sid": call_sid}
 
 @app.get("/call-status/{call_sid}")
 async def get_call_status(call_sid: str):
