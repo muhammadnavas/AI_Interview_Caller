@@ -861,6 +861,213 @@ def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
         logger.warning(f"Error fetching candidate by id: {e}")
         return None
 
+def update_candidate_call_tracking(candidate_id: str, call_data: dict) -> bool:
+    """Update candidate document in MongoDB with call tracking data"""
+    try:
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            logger.warning("pymongo not installed; cannot update call tracking")
+            return False
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            logger.warning("MONGODB_URI not configured; cannot update call tracking")
+            return False
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Try to find candidate by various ID formats
+        try:
+            from bson import ObjectId
+            query = {"_id": ObjectId(candidate_id)}
+            doc = coll.find_one(query)
+        except Exception:
+            doc = coll.find_one({"$or": [
+                {"id": candidate_id},
+                {"email": candidate_id},
+                {"phone": candidate_id},
+                {"phone_number": candidate_id}
+            ]})
+
+        if not doc:
+            logger.warning(f"Candidate not found for ID: {candidate_id}")
+            return False
+
+        # Initialize call tracking structure if it doesn't exist
+        if "call_tracking" not in doc:
+            doc["call_tracking"] = {
+                "total_attempts": 0,
+                "max_attempts": 3,
+                "status": "active",  # active, max_attempts, interview_scheduled, completed
+                "last_contact_date": None,
+                "call_history": [],
+                "interview_details": None,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+
+        # Update call tracking data
+        doc["call_tracking"]["total_attempts"] += 1
+        doc["call_tracking"]["last_contact_date"] = call_data.get("initiated_at", datetime.now().isoformat())
+        doc["call_tracking"]["updated_at"] = datetime.now().isoformat()
+        
+        # Add call to history
+        doc["call_tracking"]["call_history"].append({
+            "call_sid": call_data.get("call_sid"),
+            "initiated_at": call_data.get("initiated_at"),
+            "status": call_data.get("twilio_status"),
+            "outcome": call_data.get("outcome"),
+            "duration": call_data.get("call_duration"),
+            "notes": call_data.get("notes")
+        })
+
+        # Update status based on attempts
+        if doc["call_tracking"]["total_attempts"] >= doc["call_tracking"]["max_attempts"]:
+            if not doc["call_tracking"].get("interview_details"):
+                doc["call_tracking"]["status"] = "max_attempts"
+
+        # Update the document
+        try:
+            from bson import ObjectId
+            result = coll.update_one({"_id": ObjectId(candidate_id)}, {"$set": doc})
+        except Exception:
+            result = coll.update_one({"$or": [
+                {"id": candidate_id},
+                {"email": candidate_id},
+                {"phone": candidate_id}
+            ]}, {"$set": doc})
+
+        logger.info(f"Updated call tracking for candidate {candidate_id}: {doc['call_tracking']['total_attempts']} attempts")
+        return result.modified_count > 0
+
+    except Exception as e:
+        logger.error(f"Error updating call tracking for candidate {candidate_id}: {e}")
+        return False
+
+def update_candidate_interview_scheduled(candidate_id: str, interview_details: dict) -> bool:
+    """Update candidate document when interview is successfully scheduled"""
+    try:
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            logger.warning("pymongo not installed; cannot update interview details")
+            return False
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return False
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Find candidate
+        try:
+            from bson import ObjectId
+            query = {"_id": ObjectId(candidate_id)}
+        except Exception:
+            query = {"$or": [
+                {"id": candidate_id},
+                {"email": candidate_id},
+                {"phone": candidate_id}
+            ]}
+
+        # Update interview details and status
+        update_data = {
+            "$set": {
+                "call_tracking.status": "interview_scheduled",
+                "call_tracking.interview_details": {
+                    "scheduled_slot": interview_details.get("scheduled_slot"),
+                    "scheduled_at": interview_details.get("scheduled_at", datetime.now().isoformat()),
+                    "call_sid": interview_details.get("call_sid"),
+                    "email_sent": interview_details.get("email_sent", False),
+                    "confirmation_sent_at": datetime.now().isoformat() if interview_details.get("email_sent") else None
+                },
+                "call_tracking.updated_at": datetime.now().isoformat()
+            }
+        }
+
+        result = coll.update_one(query, update_data)
+        logger.info(f"Updated interview details for candidate {candidate_id}: {interview_details.get('scheduled_slot')}")
+        return result.modified_count > 0
+
+    except Exception as e:
+        logger.error(f"Error updating interview details for candidate {candidate_id}: {e}")
+        return False
+
+def get_candidate_call_status(candidate_id: str) -> dict:
+    """Get call tracking status for a candidate from MongoDB"""
+    try:
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            return {"can_call": True, "reason": "MongoDB not available", "attempts": 0}
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return {"can_call": True, "reason": "MongoDB not configured", "attempts": 0}
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Find candidate
+        try:
+            from bson import ObjectId
+            doc = coll.find_one({"_id": ObjectId(candidate_id)})
+        except Exception:
+            doc = coll.find_one({"$or": [
+                {"id": candidate_id},
+                {"email": candidate_id},
+                {"phone": candidate_id}
+            ]})
+
+        if not doc:
+            return {"can_call": True, "reason": "New candidate", "attempts": 0}
+
+        call_tracking = doc.get("call_tracking", {})
+        total_attempts = call_tracking.get("total_attempts", 0)
+        max_attempts = call_tracking.get("max_attempts", 3)
+        status = call_tracking.get("status", "active")
+
+        # Check if they can receive calls
+        if status == "interview_scheduled":
+            return {
+                "can_call": False,
+                "reason": "Interview already scheduled",
+                "attempts": total_attempts,
+                "status": status,
+                "interview_details": call_tracking.get("interview_details")
+            }
+
+        if total_attempts >= max_attempts:
+            return {
+                "can_call": False,
+                "reason": f"Maximum attempts reached ({total_attempts}/{max_attempts})",
+                "attempts": total_attempts,
+                "status": "max_attempts"
+            }
+
+        return {
+            "can_call": True,
+            "reason": f"Can receive calls ({total_attempts}/{max_attempts})",
+            "attempts": total_attempts,
+            "status": status
+        }
+
+    except Exception as e:
+        logger.error(f"Error checking call status for candidate {candidate_id}: {e}")
+        return {"can_call": True, "reason": "Error checking status", "attempts": 0}
+
 def find_mentioned_time_slot(text: str, available_slots: List[str]) -> Optional[str]:
     """Find if any time slot is mentioned in the text"""
     text_lower = text.lower()
@@ -1236,17 +1443,14 @@ async def process_speech(request: Request):
                     # Send confirmation email
                     email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
                     
-                    # Save interview schedule to database
-                    save_interview_schedule(candidate_id, call_sid, confirmed_slot, email_sent)
-                    
-                    # Update call attempt with successful outcome
-                    save_call_attempt(
-                        candidate_id=candidate_id,
-                        call_sid=call_sid,
-                        phone_number=session.candidate_phone,
-                        outcome="interview_scheduled",
-                        notes=f"Interview successfully scheduled for {confirmed_slot}. Email sent: {email_sent}"
-                    )
+                    # Save interview schedule to MongoDB
+                    interview_details = {
+                        "scheduled_slot": confirmed_slot,
+                        "call_sid": call_sid,
+                        "email_sent": email_sent,
+                        "scheduled_at": datetime.now().isoformat()
+                    }
+                    update_candidate_interview_scheduled(candidate_id, interview_details)
                     
                     # Log successful scheduling
                     log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
@@ -1280,17 +1484,14 @@ async def process_speech(request: Request):
                     # Send confirmation email
                     email_sent = await send_interview_confirmation_email(candidate, mentioned_slot, call_sid)
                     
-                    # Save interview schedule to database
-                    save_interview_schedule(candidate_id, call_sid, mentioned_slot, email_sent)
-                    
-                    # Update call attempt with successful outcome
-                    save_call_attempt(
-                        candidate_id=candidate_id,
-                        call_sid=call_sid,
-                        phone_number=session.candidate_phone,
-                        outcome="interview_scheduled",
-                        notes=f"Interview successfully scheduled for {mentioned_slot}. Email sent: {email_sent}"
-                    )
+                    # Save interview schedule to MongoDB
+                    interview_details = {
+                        "scheduled_slot": mentioned_slot,
+                        "call_sid": call_sid,
+                        "email_sent": email_sent,
+                        "scheduled_at": datetime.now().isoformat()
+                    }
+                    update_candidate_interview_scheduled(candidate_id, interview_details)
                     
                     # Log successful scheduling
                     log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
@@ -1432,6 +1633,20 @@ async def make_actual_call(request: Request):
             "message": "Please provide a valid candidate_id or configure candidate phone number in env"
         }
     
+    # Check call limits from MongoDB
+    final_candidate_id = candidate_id or candidate_info.get('email') or f"phone_{candidate_info.get('phone')}"
+    call_status = get_candidate_call_status(final_candidate_id)
+    
+    if not call_status["can_call"]:
+        return {
+            "status": "error",
+            "message": f"Cannot make call: {call_status['reason']}",
+            "candidate": candidate_info.get("name"),
+            "attempts": call_status["attempts"],
+            "call_limit_reached": True,
+            "details": call_status
+        }
+    
     webhook_url = f"{WEBHOOK_BASE_URL}/twilio-voice"
     
     # Check if webhook URL is publicly accessible
@@ -1467,33 +1682,10 @@ async def make_actual_call(request: Request):
                 "message": f"Invalid Twilio credentials: {str(cred_error)}"
             }
         
-        # Get candidate ID for tracking
-        candidate_id = candidate_info.get('id') or candidate_info.get('email') or f"phone_{candidate_info.get('phone', 'unknown')}"
-        
-        # Check call limit (max 3 attempts if no interview scheduled)
-        can_call, current_attempts, has_scheduled = check_call_limit(candidate_id, max_attempts=3)
-        
-        if not can_call:
-            # Update candidate status to indicate they've reached the limit
-            update_candidate_status(candidate_id, "max_attempts_reached", 
-                                  f"Reached maximum {current_attempts} call attempts without scheduling")
-            
-            log_system_event("WARNING", "CALL_SYSTEM", "CALL_LIMIT_REACHED", 
-                           f"Call blocked: Candidate has reached maximum attempts ({current_attempts}/3) without scheduling", 
-                           candidate_id=candidate_id)
-            
-            return {
-                "status": "error",
-                "message": f"Maximum call attempts reached for this candidate ({current_attempts}/3). No interview was scheduled in previous calls.",
-                "current_attempts": current_attempts,
-                "has_scheduled_interview": has_scheduled,
-                "suggestion": "Consider sending an email or trying a different contact method."
-            }
-        
         # Log call initiation
         log_system_event("INFO", "CALL_SYSTEM", "CALL_INITIATED", 
-                        f"Initiating call to {candidate_info.get('phone')} for {candidate_info.get('name')} (Attempt {current_attempts + 1}/3)", 
-                        candidate_id=candidate_id)
+                        f"Initiating call to {candidate_info.get('phone')} for {candidate_info.get('name')} (Attempt {call_status['attempts'] + 1}/3)", 
+                        candidate_id=final_candidate_id)
         
         # Create the call
         call = client.calls.create(
@@ -1507,15 +1699,15 @@ async def make_actual_call(request: Request):
         logger.info(f"Call initiated successfully - Call ID: {call.sid}")
         logger.info(f"Initial call status: {call.status}")
         
-        # Save initial call attempt
-        save_call_attempt(
-            candidate_id=candidate_id,
-            call_sid=call.sid,
-            phone_number=candidate_info.get("phone"),
-            twilio_status=call.status,
-            outcome="initiated",
-            notes=f"Call initiated to {candidate_info.get('name')} for {candidate_info.get('position')} position"
-        )
+        # Update MongoDB with call attempt
+        call_data = {
+            "call_sid": call.sid,
+            "initiated_at": datetime.now().isoformat(),
+            "twilio_status": call.status,
+            "outcome": "initiated",
+            "notes": f"Call initiated to {candidate_info.get('name')} for {candidate_info.get('position')} position"
+        }
+        update_candidate_call_tracking(final_candidate_id, call_data)
 
         # Check call status after a moment
         import time
@@ -1523,18 +1715,17 @@ async def make_actual_call(request: Request):
         updated_call = client.calls(call.sid).fetch()
         logger.info(f"Updated call status: {updated_call.status}")
         
-        # Update call attempt with latest status
-        save_call_attempt(
-            candidate_id=candidate_id,
-            call_sid=call.sid,
-            phone_number=candidate_info.get("phone"),
-            twilio_status=updated_call.status,
-            call_duration=getattr(updated_call, 'duration', None),
-            error_code=getattr(updated_call, 'error_code', None),
-            error_message=getattr(updated_call, 'error_message', None),
-            outcome="in_progress" if updated_call.status in ['ringing', 'in-progress'] else updated_call.status,
-            notes=f"Call status updated: {updated_call.status}"
-        )
+        # Update MongoDB with latest call status
+        updated_call_data = {
+            "call_sid": call.sid,
+            "initiated_at": datetime.now().isoformat(),
+            "twilio_status": updated_call.status,
+            "call_duration": getattr(updated_call, 'duration', None),
+            "outcome": "in_progress" if updated_call.status in ['ringing', 'in-progress'] else updated_call.status,
+            "notes": f"Call status updated: {updated_call.status}"
+        }
+        # Don't increment attempts again, just update the last call record
+        # update_candidate_call_tracking(final_candidate_id, updated_call_data)
         
         if updated_call.status == 'failed':
             error_code = getattr(updated_call, 'error_code', 'Unknown')
@@ -1604,17 +1795,83 @@ async def make_actual_call(request: Request):
 
 @app.get("/candidates")
 async def get_candidates():
-    """Get all candidates from MongoDB"""
+    """Get all candidates from MongoDB with call tracking data"""
     try:
-        candidates = get_all_candidates_from_mongo()
+        try:
+            from pymongo import MongoClient
+        except ImportError:
+            logger.warning("pymongo not installed; returning empty list")
+            return {"candidates": [], "total": 0, "status": "error", "message": "MongoDB not available"}
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return {"candidates": [], "total": 0, "status": "error", "message": "MongoDB not configured"}
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Get all candidates with call tracking data
+        candidates_cursor = coll.find({})
+        candidates = []
+        
+        total_candidates = 0
+        active_candidates = 0
+        max_attempts_reached = 0
+        interviews_scheduled = 0
+        
+        for doc in candidates_cursor:
+            total_candidates += 1
+            
+            # Extract basic info
+            candidate = {
+                "id": str(doc.get("_id", doc.get("id", "unknown"))),
+                "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
+                "phone": doc.get("phone") or doc.get("phone_number"),
+                "email": doc.get("email"),
+                "position": doc.get("position") or doc.get("role"),
+                "company": doc.get("company") or doc.get("employer")
+            }
+            
+            # Add call tracking data
+            call_tracking = doc.get("call_tracking", {})
+            candidate["call_tracking"] = {
+                "total_attempts": call_tracking.get("total_attempts", 0),
+                "max_attempts": call_tracking.get("max_attempts", 3),
+                "status": call_tracking.get("status", "active"),
+                "last_contact_date": call_tracking.get("last_contact_date"),
+                "can_call": call_tracking.get("total_attempts", 0) < call_tracking.get("max_attempts", 3) and call_tracking.get("status", "active") not in ["interview_scheduled", "max_attempts"],
+                "interview_details": call_tracking.get("interview_details"),
+                "recent_calls": call_tracking.get("call_history", [])[-3:] if call_tracking.get("call_history") else []
+            }
+            
+            # Update counters
+            status = call_tracking.get("status", "active")
+            if status == "active" and call_tracking.get("total_attempts", 0) < call_tracking.get("max_attempts", 3):
+                active_candidates += 1
+            elif status == "max_attempts":
+                max_attempts_reached += 1
+            elif status == "interview_scheduled":
+                interviews_scheduled += 1
+                
+            candidates.append(candidate)
         
         return {
             "candidates": candidates,
-            "total": len(candidates),
+            "total": total_candidates,
+            "summary": {
+                "active_candidates": active_candidates,
+                "max_attempts_reached": max_attempts_reached,
+                "interviews_scheduled": interviews_scheduled,
+                "can_still_call": active_candidates
+            },
             "status": "success"
         }
+        
     except Exception as e:
-        logger.error(f"Error fetching candidates: {e}")
+        logger.error(f"Error fetching candidates with call tracking: {e}")
         return {
             "error": str(e),
             "candidates": [],
