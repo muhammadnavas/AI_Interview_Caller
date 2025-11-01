@@ -13,6 +13,9 @@ from dataclasses import dataclass, asdict
 import logging
 import html
 import xml.etree.ElementTree as ET
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 # Configure logging
 logging.basicConfig(
@@ -40,6 +43,13 @@ TWILIO_PHONE_NUMBER = config("TWILIO_PHONE_NUMBER", default="")
 # OpenAI
 OPENAI_API_KEY = config("OPENAI_API_KEY", default="")
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+
+# Email Configuration
+SMTP_SERVER = config("SMTP_SERVER", default="smtp.gmail.com")
+SMTP_PORT = int(config("SMTP_PORT", default="587"))
+SMTP_USERNAME = config("SMTP_USERNAME", default="")
+SMTP_PASSWORD = config("SMTP_PASSWORD", default="")
+SENDER_EMAIL = config("SENDER_EMAIL", default="")
 
 # Webhook URL - Auto-detect ngrok or use config
 def get_webhook_url():
@@ -380,46 +390,92 @@ def get_or_create_session(call_sid: str, candidate_phone: str, candidate: Option
     return session
 
 def analyze_intent(text: str) -> tuple[str, float]:
-    """Analyze user intent and return intent type with confidence score"""
+    """Enhanced intent analysis for natural conversation flow"""
     text_lower = text.lower().strip()
     
-    # Confirmation patterns
+    # Strong confirmation patterns
     confirmation_patterns = [
-        (r'\b(yes|yeah|yep|confirm|confirmed|ok|okay|sure|perfect|sounds good|that works|fine|absolutely|definitely)\b', 0.9),
-        (r'\b(schedule|book|set)\b.*\b(it|that|interview)\b', 0.8),
-        (r'\b(good|great|works for me)\b', 0.7),
+        (r'\b(yes|yeah|yep|yup|absolutely|definitely|sure|of course|sounds good|perfect|great|excellent)\b', 0.95),
+        (r'\b(ok|okay|alright|fine|good|works for me|that works|i can do that)\b', 0.85),
+        (r'\b(confirm|confirmed|book|schedule|set it up|let\'s do it)\b', 0.9),
+        (r'\b(available|free|open)\b', 0.75),
     ]
     
-    # Rejection patterns
+    # Strong rejection patterns  
     rejection_patterns = [
-        (r'\b(no|nope|can\'t|cannot|not available|busy|unavailable|won\'t work)\b', 0.9),
-        (r'\b(different time|another time|reschedule)\b', 0.8),
+        (r'\b(no|nope|not really|can\'t|cannot|unable|unavailable)\b', 0.9),
+        (r'\b(busy|booked|occupied|not available|not free)\b', 0.85),
+        (r'\b(different time|another time|reschedule|change|doesn\'t work|won\'t work)\b', 0.8),
+        (r'\b(sorry|unfortunately|afraid)\b.*\b(can\'t|cannot|not|no)\b', 0.8),
     ]
     
-    # Time mention patterns
+    # Time-specific patterns (when they mention specific times)
     time_patterns = [
+        (r'\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.*\b(at|@)?\s*(\d{1,2})\s*(am|pm)\b', 0.95),
+        (r'\b(\d{1,2})\s*(am|pm)\b.*\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b', 0.95),
         (r'\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b', 0.8),
-        (r'\b(\d{1,2})\s*(am|pm)\b', 0.7),
-        (r'\b(morning|afternoon|evening)\b', 0.6),
+        (r'\b(\d{1,2})\s*(am|pm|o\'clock)\b', 0.75),
+        (r'\b(morning|afternoon|evening|noon|midnight)\b', 0.6),
     ]
     
-    # Check for confirmation
-    for pattern, confidence in confirmation_patterns:
-        if re.search(pattern, text_lower):
-            return "confirmation", confidence
+    # Availability checking patterns
+    availability_patterns = [
+        (r'\b(let me check|check my calendar|look at my schedule|see what|when am i)\b', 0.7),
+        (r'\b(what times|what slots|what options|available times|available slots)\b', 0.8),
+    ]
     
-    # Check for rejection
-    for pattern, confidence in rejection_patterns:
-        if re.search(pattern, text_lower):
-            return "rejection", confidence
+    # Polite conversation patterns
+    politeness_patterns = [
+        (r'\b(thank you|thanks|appreciate|grateful)\b', 0.6),
+        (r'\b(hello|hi|hey|good morning|good afternoon)\b', 0.6),
+        (r'\b(sorry|excuse me|pardon)\b', 0.5),
+    ]
     
-    # Check for time mention
+    # Check patterns in order of confidence
+    
+    # Check for specific time mentions first (highest priority)
     for pattern, confidence in time_patterns:
         if re.search(pattern, text_lower):
             return "time_mention", confidence
     
-    # Default: unclear intent
-    return "unclear", 0.3
+    # Check for strong confirmations
+    for pattern, confidence in confirmation_patterns:
+        if re.search(pattern, text_lower):
+            return "confirmation", confidence
+    
+    # Check for rejections
+    for pattern, confidence in rejection_patterns:
+        if re.search(pattern, text_lower):
+            return "rejection", confidence
+            
+    # Check for availability checking
+    for pattern, confidence in availability_patterns:
+        if re.search(pattern, text_lower):
+            return "checking_availability", confidence
+    
+    # Check for politeness (neutral but positive)
+    for pattern, confidence in politeness_patterns:
+        if re.search(pattern, text_lower):
+            return "polite_response", confidence
+    
+    # Check text length and complexity for better classification
+    if len(text_lower) < 3:
+        return "unclear", 0.1
+    elif len(text_lower.split()) == 1:
+        # Single word responses
+        single_word = text_lower.strip()
+        if single_word in ["yes", "yep", "yeah", "ok", "okay", "sure", "fine", "good"]:
+            return "confirmation", 0.8
+        elif single_word in ["no", "nope", "nah"]:
+            return "rejection", 0.8
+        else:
+            return "unclear", 0.4
+    
+    # Default: unclear intent but with some confidence if it's a reasonable response
+    if len(text_lower.split()) >= 2:
+        return "unclear", 0.5
+    else:
+        return "unclear", 0.3
 
 
 def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
@@ -490,6 +546,154 @@ def get_ai_greeting(candidate: Optional[dict] = None) -> str:
     
     greeting = f"Hello {first_name}! This is Sarah from {company}'s talent acquisition team. I'm calling regarding your application for the {position} position. I hope I'm catching you at a good time for a quick interview scheduling call."
     return greeting
+
+async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str, call_sid: str):
+    """Send professional interview confirmation email"""
+    if not all([SMTP_USERNAME, SMTP_PASSWORD, SENDER_EMAIL]):
+        logger.warning("SMTP credentials not configured. Cannot send confirmation email.")
+        return False
+    
+    try:
+        # Extract candidate information
+        candidate_name = candidate.get('name', 'Candidate')
+        candidate_email = candidate.get('email')
+        position = candidate.get('position', 'Software Developer')
+        company = candidate.get('company', 'Our Company')
+        
+        if not candidate_email:
+            logger.warning(f"No email address found for candidate: {candidate_name}")
+            return False
+        
+        # Create email content
+        subject = f"Interview Confirmation - {position} Position at {company}"
+        
+        # HTML email body
+        html_body = f"""
+        <html>
+        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+            <div style="max-width: 600px; margin: 0 auto; padding: 20px;">
+                <div style="background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                    <h2 style="color: #2c3e50; margin-top: 0;">Interview Confirmation</h2>
+                    <p>Dear {candidate_name},</p>
+                    <p>Thank you for speaking with us today! We're excited to confirm your interview for the <strong>{position}</strong> position at <strong>{company}</strong>.</p>
+                </div>
+                
+                <div style="background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                    <h3 style="color: #1976d2; margin-top: 0;">Interview Details:</h3>
+                    <p><strong>Position:</strong> {position}</p>
+                    <p><strong>Date & Time:</strong> {confirmed_slot}</p>
+                    <p><strong>Format:</strong> Video Interview (Link will be sent separately)</p>
+                    <p><strong>Duration:</strong> Approximately 45-60 minutes</p>
+                </div>
+                
+                <div style="margin: 20px 0;">
+                    <h3 style="color: #2c3e50;">What to Expect:</h3>
+                    <ul style="padding-left: 20px;">
+                        <li>Technical discussion about your experience and skills</li>
+                        <li>Questions about your approach to problem-solving</li>
+                        <li>Overview of our company culture and the role</li>
+                        <li>Opportunity for you to ask questions about the position</li>
+                    </ul>
+                </div>
+                
+                <div style="margin: 20px 0;">
+                    <h3 style="color: #2c3e50;">Preparation Tips:</h3>
+                    <ul style="padding-left: 20px;">
+                        <li>Review the job description and your application</li>
+                        <li>Prepare examples of your relevant experience</li>
+                        <li>Test your video/audio setup beforehand</li>
+                        <li>Have questions ready about the role and company</li>
+                    </ul>
+                </div>
+                
+                <div style="background-color: #fff3cd; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                    <p><strong>Important:</strong> If you need to reschedule or have any questions, please reply to this email or call us at your earliest convenience.</p>
+                </div>
+                
+                <div style="margin-top: 30px; padding-top: 20px; border-top: 2px solid #e9ecef;">
+                    <p>We look forward to speaking with you!</p>
+                    <p>Best regards,<br>
+                    <strong>Sarah Johnson</strong><br>
+                    Talent Acquisition Team<br>
+                    {company}<br>
+                    <a href="mailto:{SENDER_EMAIL}" style="color: #1976d2;">{SENDER_EMAIL}</a></p>
+                </div>
+                
+                <div style="margin-top: 20px; font-size: 12px; color: #6c757d; text-align: center;">
+                    <p>This email was sent following your phone conversation on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}.<br>
+                    Reference ID: {call_sid}</p>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Plain text version
+        text_body = f"""
+        Interview Confirmation - {position} Position at {company}
+        
+        Dear {candidate_name},
+        
+        Thank you for speaking with us today! We're excited to confirm your interview for the {position} position at {company}.
+        
+        Interview Details:
+        - Position: {position}
+        - Date & Time: {confirmed_slot}
+        - Format: Video Interview (Link will be sent separately)
+        - Duration: Approximately 45-60 minutes
+        
+        What to Expect:
+        • Technical discussion about your experience and skills
+        • Questions about your approach to problem-solving
+        • Overview of our company culture and the role
+        • Opportunity for you to ask questions about the position
+        
+        Preparation Tips:
+        • Review the job description and your application
+        • Prepare examples of your relevant experience
+        • Test your video/audio setup beforehand
+        • Have questions ready about the role and company
+        
+        Important: If you need to reschedule or have any questions, please reply to this email or call us at your earliest convenience.
+        
+        We look forward to speaking with you!
+        
+        Best regards,
+        Sarah Johnson
+        Talent Acquisition Team
+        {company}
+        {SENDER_EMAIL}
+        
+        This email was sent following your phone conversation on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}.
+        Reference ID: {call_sid}
+        """
+        
+        # Create message
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = candidate_email
+        
+        # Add both plain text and HTML versions
+        part1 = MIMEText(text_body, 'plain')
+        part2 = MIMEText(html_body, 'html')
+        
+        msg.attach(part1)
+        msg.attach(part2)
+        
+        # Send email
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+        server.send_message(msg)
+        server.quit()
+        
+        logger.info(f"Interview confirmation email sent successfully to {candidate_email} for slot: {confirmed_slot}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to send confirmation email: {e}")
+        return False
 
 def generate_ai_response(session: ConversationSession, user_input: str, intent: str, confidence: float) -> str:
     """Generate appropriate AI response based on conversation context and intent"""
@@ -601,13 +805,14 @@ async def twilio_voice(request: Request):
         session.turns.append(initial_turn)
         save_conversation_session(session)
         
-        # Generate TwiML with conversation flow
+        # Generate professional TwiML with natural conversation flow
         twiml = f"""<Response>
             <Say voice="alice">{html.escape(greeting)}</Say>
-            <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="auto">
-                <Say voice="alice">Please let me know if any of these times work for you: Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM.</Say>
+            <Pause length="1"/>
+            <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="15" speechTimeout="auto">
+                <Say voice="alice">I'm calling to schedule your interview. We're excited about your application and would love to meet with you. Are you available to discuss some potential interview times right now?</Say>
             </Gather>
-            <Say voice="alice">Thank you. We'll follow up by email with the details.</Say>
+            <Say voice="alice">Thank you for your time. We'll reach out via email with more details. Have a great day!</Say>
             <Hangup/>
         </Response>"""
         
@@ -639,12 +844,12 @@ async def process_speech(request: Request):
         if not speech_result or len(speech_result) < 3 or confidence < 0.3:
             logger.warning(f"Empty or low confidence speech: '{speech_result}' (confidence: {confidence})")
             
-            # Generate retry TwiML
+            # Generate contextual retry TwiML based on conversation stage
             retry_twiml = f"""<Response>
-                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="auto">
-                    <Say voice="alice">I'm sorry, I didn't catch that clearly. Could you please repeat which time works for you? Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM?</Say>
+                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="15" speechTimeout="auto">
+                    <Say voice="alice">I'm sorry, I didn't hear that clearly. Could you please speak a bit louder? I was asking if you're available to discuss some interview times right now.</Say>
                 </Gather>
-                <Say voice="alice">Thank you. We'll follow up by email with the details.</Say>
+                <Say voice="alice">No worries! We'll send you an email with available times. Thank you!</Say>
                 <Hangup/>
             </Response>"""
             return Response(content=retry_twiml, media_type="text/xml")
@@ -655,85 +860,92 @@ async def process_speech(request: Request):
             logger.warning(f"Session not found for CallSid: {call_sid}, creating new session")
             session = get_or_create_session(call_sid, form_data.get("From", ""))
         
-        # Analyze user intent
+        # Analyze user intent and conversation context
         intent, intent_confidence = analyze_intent(speech_result)
         turn_number = len(session.turns) + 1
         
-        logger.info(f"Turn #{turn_number} - Intent: {intent} (confidence: {intent_confidence:.2f})")
+        logger.info(f"Turn #{turn_number} - Intent: {intent} (confidence: {intent_confidence:.2f}) - Input: '{speech_result}'")
         
-        # Prevent infinite loops - max 6 turns
-        if turn_number > 6:
-            ai_response = "Thank you for your time. Due to call length limits, we'll follow up by email with scheduling options. Goodbye."
+        # Define conversation stages for better flow
+        conversation_stage = "initial" if turn_number == 2 else "scheduling" if turn_number < 5 else "closing"
+        
+        # Handle different conversation stages
+        if conversation_stage == "initial":
+            # First response - check if they're available to talk
+            if intent == "confirmation" or any(word in speech_result.lower() for word in ["yes", "yeah", "sure", "available", "okay", "ok"]):
+                ai_response = "Wonderful! We have several interview slots available. Let me share them with you: Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM. Which of these times works best for your schedule?"
+                next_action = "gather_schedule"
+            elif intent == "rejection" or any(word in speech_result.lower() for word in ["no", "not", "busy", "can't", "cannot"]):
+                ai_response = "I completely understand. Would you prefer if we sent you an email with our available times so you can respond when convenient?"
+                next_action = "gather_email_preference"
+            else:
+                ai_response = "No problem at all. I'm calling to schedule your interview. Do you have just a minute to go over some available times?"
+                next_action = "gather_availability"
+                
+        elif conversation_stage == "scheduling":
+            # Main scheduling conversation
+            if intent == "confirmation" and intent_confidence > 0.6:
+                # Look for specific time mentioned
+                mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
+                if mentioned_slot:
+                    confirmed_slot = mentioned_slot
+                    session.confirmed_slot = confirmed_slot
+                    session.status = "completed"
+                    session.end_time = datetime.now().isoformat()
+                    
+                    # Send confirmation email
+                    candidate = session.candidate or CANDIDATE
+                    email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                    
+                    if email_sent:
+                        ai_response = f"Perfect! I have you scheduled for {confirmed_slot}. You'll receive a detailed confirmation email shortly with all the interview information. We're looking forward to meeting with you!"
+                    else:
+                        ai_response = f"Perfect! I have you scheduled for {confirmed_slot}. We'll follow up with the interview details. We're looking forward to meeting with you!"
+                    
+                    next_action = "end_call"
+                else:
+                    ai_response = f"Great! Just to confirm, which time works best for you? We have Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM."
+                    next_action = "gather_specific_time"
+            elif intent == "rejection":
+                ai_response = "I understand those times don't work. We're flexible with scheduling. Would you prefer morning or afternoon slots? We can also look at other days."
+                next_action = "gather_preferences"
+            elif any(day.lower() in speech_result.lower() for day in ["monday", "tuesday", "wednesday", "thursday"]):
+                # They mentioned a day, try to match it
+                mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
+                if mentioned_slot:
+                    session.confirmed_slot = mentioned_slot
+                    session.status = "completed"
+                    session.end_time = datetime.now().isoformat()
+                    
+                    # Send confirmation email
+                    candidate = session.candidate or CANDIDATE
+                    email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                    
+                    if email_sent:
+                        ai_response = f"Excellent! I have you down for {mentioned_slot}. You'll receive a detailed confirmation email with all the interview information. Thank you so much!"
+                    else:
+                        ai_response = f"Excellent! I have you down for {mentioned_slot}. We'll follow up with all the interview details. Thank you so much!"
+                    
+                    next_action = "end_call"
+                else:
+                    ai_response = "I heard you mention a day preference. Let me repeat our exact times: Monday at 10 AM, Tuesday at 2 PM, Wednesday at 11 AM, or Thursday at 3 PM. Which specific time works?"
+                    next_action = "gather_specific_time"
+            else:
+                ai_response = generate_ai_response(session, speech_result, intent, intent_confidence)
+                next_action = "continue_gathering"
+                
+        else:  # closing stage
+            ai_response = "Thank you for your time today. We'll send you an email with our available interview times and you can respond at your convenience. Have a great day!"
             session.status = "failed"
             session.end_time = datetime.now().isoformat()
-            
-            # Record final turn
-            turn = ConversationTurn(
-                turn_number=turn_number,
-                candidate_input=speech_result,
-                ai_response=ai_response,
-                timestamp=datetime.now().isoformat(),
-                intent_detected=intent,
-                confidence_score=intent_confidence
-            )
-            session.turns.append(turn)
-            save_conversation_session(session)
-            
-            return Response(
-                content=f"<Response><Say voice='alice'>{html.escape(ai_response)}</Say><Hangup/></Response>",
-                media_type="text/xml"
-            )
+            next_action = "end_call"
         
-        # Handle confirmation intent
-        if intent == "confirmation" and intent_confidence > 0.6:
-            # Find mentioned time slot or use first available
-            mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
-            confirmed_slot = mentioned_slot or TIME_SLOTS[0]
-            
-            session.confirmed_slot = confirmed_slot
-            session.status = "completed"
+        # Prevent infinite loops - max 6 turns total
+        if turn_number > 6:
+            ai_response = "Thank you so much for your time. We'll follow up by email with scheduling details. Have a wonderful day!"
+            session.status = "failed" if not session.confirmed_slot else "completed"
             session.end_time = datetime.now().isoformat()
-            
-            ai_response = f"Perfect! Your interview is confirmed for {confirmed_slot}. We'll send you a calendar invite. Thank you!"
-            
-            # Record final turn
-            turn = ConversationTurn(
-                turn_number=turn_number,
-                candidate_input=speech_result,
-                ai_response=ai_response,
-                timestamp=datetime.now().isoformat(),
-                intent_detected=intent,
-                confidence_score=intent_confidence
-            )
-            session.turns.append(turn)
-            save_conversation_session(session)
-            
-            logger.info(f"CONFIRMATION DETECTED! Confirmed slot: {confirmed_slot} - Call completed in {turn_number} turns")
-            
-            confirmation_twiml = f"<Response><Say voice='alice'>{html.escape(ai_response)}</Say><Hangup/></Response>"
-            return Response(content=confirmation_twiml, media_type="text/xml")
-        
-        # Handle rejection or request for different time
-        elif intent == "rejection":
-            if turn_number >= 3:
-                ai_response = "I understand. We'll follow up by email with alternative options. Thank you for your time."
-                session.status = "failed"
-                session.end_time = datetime.now().isoformat()
-            else:
-                ai_response = f"I understand. We have these other slots available: {', '.join(TIME_SLOTS[1:])}. Would any of these work for you?"
-        
-        # Too many unclear interactions - provide guidance
-        elif turn_number >= 4:
-            ai_response = f"Let me be clear about our available times: {', '.join(TIME_SLOTS)}. Please say 'yes' or 'confirm' followed by your preferred time."
-            
-            if turn_number >= 5:
-                ai_response = "Thank you for your time. We'll follow up by email with scheduling options. Goodbye."
-                session.status = "failed"
-                session.end_time = datetime.now().isoformat()
-        
-        # Generate contextual AI response for other cases
-        else:
-            ai_response = generate_ai_response(session, speech_result, intent, intent_confidence)
+            next_action = "end_call"
         
         # Record conversation turn
         turn = ConversationTurn(
@@ -747,21 +959,49 @@ async def process_speech(request: Request):
         session.turns.append(turn)
         save_conversation_session(session)
         
-        logger.info(f"AI response: '{ai_response}'")
+        logger.info(f"AI response: '{ai_response}' | Next action: {next_action}")
         
-        # Generate appropriate TwiML response
-        if session.status in ["completed", "failed"]:
-            # Call should end
-            final_twiml = f"<Response><Say voice='alice'>{html.escape(ai_response)}</Say><Hangup/></Response>"
+        # Generate TwiML based on conversation flow
+        if next_action == "end_call" or session.status in ["completed", "failed"]:
+            # End the call professionally
+            final_twiml = f"""<Response>
+                <Say voice='alice'>{html.escape(ai_response)}</Say>
+                <Hangup/>
+            </Response>"""
             return Response(content=final_twiml, media_type="text/xml")
+            
+        elif next_action == "gather_schedule":
+            # Gathering time slot preferences
+            schedule_twiml = f"""<Response>
+                <Say voice="alice">{html.escape(ai_response)}</Say>
+                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="15" speechTimeout="auto">
+                    <Say voice="alice">Just say the day and time that works best for you.</Say>
+                </Gather>
+                <Say voice="alice">No problem! We'll email you the available times. Thank you!</Say>
+                <Hangup/>
+            </Response>"""
+            return Response(content=schedule_twiml, media_type="text/xml")
+            
+        elif next_action == "gather_specific_time":
+            # Getting specific time confirmation
+            specific_twiml = f"""<Response>
+                <Say voice="alice">{html.escape(ai_response)}</Say>
+                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="15" speechTimeout="auto">
+                    <Say voice="alice">Please tell me which specific time works for you.</Say>
+                </Gather>
+                <Say voice="alice">We'll follow up by email. Thank you!</Say>
+                <Hangup/>
+            </Response>"""
+            return Response(content=specific_twiml, media_type="text/xml")
+            
         else:
-            # Continue conversation
+            # Default continuation for other cases
             continue_twiml = f"""<Response>
                 <Say voice="alice">{html.escape(ai_response)}</Say>
-                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="auto">
-                    <Say voice="alice">Please let me know which time works best for you.</Say>
+                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="15" speechTimeout="auto">
+                    <Say voice="alice">Please let me know your thoughts.</Say>
                 </Gather>
-                <Say voice="alice">Thank you. We'll send you an email with the details.</Say>
+                <Say voice="alice">Thank you! We'll reach out by email with the details.</Say>
                 <Hangup/>
             </Response>"""
             return Response(content=continue_twiml, media_type="text/xml")
@@ -1076,6 +1316,42 @@ async def call_specific_candidate(request: Request):
                 "message": f"Call failed: {error_msg}",
                 "suggestion": "Check your Twilio console for more details"
             }
+
+@app.post("/test-email")
+async def test_email(request: Request):
+    """Test email functionality"""
+    try:
+        body = await request.json()
+        candidate_id = body.get("candidate_id") if isinstance(body, dict) else None
+        test_slot = body.get("time_slot", "Monday at 10 AM")
+        
+        # Get candidate info
+        candidate_info = None
+        if candidate_id:
+            candidate_info = fetch_candidate_by_id(candidate_id)
+        
+        if not candidate_info:
+            candidate_info = CANDIDATE
+        
+        # Send test email
+        test_call_sid = f"TEST_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        email_sent = await send_interview_confirmation_email(candidate_info, test_slot, test_call_sid)
+        
+        return {
+            "status": "success" if email_sent else "error",
+            "message": "Test email sent successfully" if email_sent else "Failed to send test email",
+            "candidate": candidate_info.get("name"),
+            "email": candidate_info.get("email"),
+            "time_slot": test_slot,
+            "call_sid": test_call_sid
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in test email: {e}")
+        return {
+            "status": "error",
+            "message": f"Test email failed: {str(e)}"
+        }
 
 @app.get("/")
 async def root():
