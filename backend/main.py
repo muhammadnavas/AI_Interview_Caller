@@ -262,65 +262,401 @@ conversation_sessions: Dict[str, ConversationSession] = {}
 
 # Database initialization
 def init_database():
-    """Initialize SQLite database for conversation persistence"""
+    """Initialize comprehensive SQLite database for complete call tracking"""
     conn = sqlite3.connect('conversations.db')
     cursor = conn.cursor()
     
+    # Main candidates table (enhanced)
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS conversation_sessions (
-            call_sid TEXT PRIMARY KEY,
-            candidate_phone TEXT,
-            start_time TEXT,
-            end_time TEXT,
-            status TEXT,
-            confirmed_slot TEXT,
-            turns_json TEXT
+        CREATE TABLE IF NOT EXISTS candidates (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            phone TEXT,
+            email TEXT,
+            position TEXT,
+            company TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            total_attempts INTEGER DEFAULT 0,
+            last_contact_date TEXT,
+            status TEXT DEFAULT 'active'
         )
     ''')
     
+    # Call attempts tracking
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS call_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id TEXT,
+            call_sid TEXT,
+            phone_number TEXT,
+            initiated_at TEXT,
+            twilio_status TEXT,
+            call_duration INTEGER,
+            call_direction TEXT,
+            call_price REAL,
+            error_code TEXT,
+            error_message TEXT,
+            outcome TEXT,
+            notes TEXT,
+            FOREIGN KEY (candidate_id) REFERENCES candidates (id)
+        )
+    ''')
+    
+    # Enhanced conversation sessions
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS conversation_sessions (
+            call_sid TEXT PRIMARY KEY,
+            candidate_id TEXT,
+            candidate_phone TEXT,
+            candidate_name TEXT,
+            position TEXT,
+            company TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            status TEXT,
+            conversation_stage TEXT,
+            confirmed_slot TEXT,
+            email_sent BOOLEAN DEFAULT 0,
+            email_sent_at TEXT,
+            total_turns INTEGER DEFAULT 0,
+            success_score REAL,
+            ai_confidence_avg REAL,
+            call_quality TEXT,
+            notes TEXT,
+            FOREIGN KEY (candidate_id) REFERENCES candidates (id)
+        )
+    ''')
+    
+    # Detailed conversation turns
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS conversation_turns (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             call_sid TEXT,
             turn_number INTEGER,
+            timestamp TEXT,
             candidate_input TEXT,
             ai_response TEXT,
-            timestamp TEXT,
             intent_detected TEXT,
             confidence_score REAL,
+            conversation_stage TEXT,
+            action_taken TEXT,
             FOREIGN KEY (call_sid) REFERENCES conversation_sessions (call_sid)
+        )
+    ''')
+    
+    # Interview schedules tracking
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS interview_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            candidate_id TEXT,
+            call_sid TEXT,
+            scheduled_slot TEXT,
+            scheduled_at TEXT,
+            interview_date TEXT,
+            interview_time TEXT,
+            status TEXT DEFAULT 'scheduled',
+            confirmation_email_sent BOOLEAN DEFAULT 0,
+            reminder_sent BOOLEAN DEFAULT 0,
+            interview_completed BOOLEAN DEFAULT 0,
+            feedback_collected BOOLEAN DEFAULT 0,
+            notes TEXT,
+            FOREIGN KEY (candidate_id) REFERENCES candidates (id),
+            FOREIGN KEY (call_sid) REFERENCES conversation_sessions (call_sid)
+        )
+    ''')
+    
+    # Analytics and metrics
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS call_analytics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT,
+            total_calls INTEGER,
+            successful_calls INTEGER,
+            failed_calls INTEGER,
+            interviews_scheduled INTEGER,
+            emails_sent INTEGER,
+            avg_call_duration REAL,
+            success_rate REAL,
+            updated_at TEXT
+        )
+    ''')
+    
+    # System logs
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS system_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT,
+            log_level TEXT,
+            component TEXT,
+            action TEXT,
+            details TEXT,
+            call_sid TEXT,
+            candidate_id TEXT
         )
     ''')
     
     conn.commit()
     conn.close()
-    logger.info("Database initialized successfully")
+    logger.info("Comprehensive database schema initialized successfully")
 
-def save_conversation_session(session: ConversationSession):
-    """Save conversation session to database"""
+def save_call_attempt(candidate_id: str, call_sid: str, phone_number: str, twilio_status: str = None, 
+                     call_duration: int = None, error_code: str = None, error_message: str = None, 
+                     outcome: str = None, notes: str = None):
+    """Save call attempt to database for tracking"""
     try:
         conn = sqlite3.connect('conversations.db')
         cursor = conn.cursor()
         
         cursor.execute('''
+            INSERT INTO call_attempts 
+            (candidate_id, call_sid, phone_number, initiated_at, twilio_status, call_duration, 
+             call_direction, error_code, error_message, outcome, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            candidate_id,
+            call_sid,
+            phone_number,
+            datetime.now().isoformat(),
+            twilio_status,
+            call_duration,
+            'outbound',
+            error_code,
+            error_message,
+            outcome,
+            notes
+        ))
+        
+        # Update candidate's total attempts
+        cursor.execute('''
+            UPDATE candidates 
+            SET total_attempts = total_attempts + 1, last_contact_date = ? 
+            WHERE id = ?
+        ''', (datetime.now().isoformat(), candidate_id))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Saved call attempt for candidate {candidate_id}: {call_sid}")
+        
+    except Exception as e:
+        logger.error(f"Error saving call attempt: {e}")
+
+def save_conversation_session(session: ConversationSession):
+    """Save enhanced conversation session to database"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        # Calculate metrics
+        total_turns = len(session.turns)
+        avg_confidence = sum(turn.confidence_score or 0 for turn in session.turns) / total_turns if total_turns > 0 else 0
+        
+        candidate = session.candidate or CANDIDATE
+        candidate_id = candidate.get('id') if isinstance(candidate, dict) else None
+        
+        cursor.execute('''
             INSERT OR REPLACE INTO conversation_sessions 
-            (call_sid, candidate_phone, start_time, end_time, status, confirmed_slot, turns_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (call_sid, candidate_id, candidate_phone, candidate_name, position, company,
+             start_time, end_time, status, confirmed_slot, total_turns, ai_confidence_avg, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             session.call_sid,
+            candidate_id,
             session.candidate_phone,
+            candidate.get('name') if isinstance(candidate, dict) else 'Unknown',
+            candidate.get('position') if isinstance(candidate, dict) else 'Unknown Position',
+            candidate.get('company') if isinstance(candidate, dict) else 'Unknown Company',
             session.start_time,
             session.end_time,
             session.status,
             session.confirmed_slot,
-            json.dumps([asdict(turn) for turn in session.turns])
+            total_turns,
+            avg_confidence,
+            f"Conversation completed with {total_turns} turns"
+        ))
+        
+        # Save individual turns
+        for turn in session.turns:
+            cursor.execute('''
+                INSERT OR REPLACE INTO conversation_turns 
+                (call_sid, turn_number, timestamp, candidate_input, ai_response, 
+                 intent_detected, confidence_score, conversation_stage)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                session.call_sid,
+                turn.turn_number,
+                turn.timestamp,
+                turn.candidate_input,
+                turn.ai_response,
+                turn.intent_detected,
+                turn.confidence_score,
+                'active'  # This could be enhanced based on conversation state
+            ))
+        
+        conn.commit()
+        conn.close()
+        logger.info(f"Saved enhanced conversation session: {session.call_sid} with {total_turns} turns")
+        
+    except Exception as e:
+        logger.error(f"Error saving conversation session: {e}")
+
+def save_interview_schedule(candidate_id: str, call_sid: str, confirmed_slot: str, email_sent: bool = False):
+    """Save interview schedule to database"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        # Parse the confirmed slot to extract date and time
+        import re
+        date_match = re.search(r'(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)', confirmed_slot)
+        time_match = re.search(r'(\d{1,2}(?::\d{2})?\s*(?:AM|PM))', confirmed_slot, re.IGNORECASE)
+        
+        interview_day = date_match.group(1) if date_match else 'TBD'
+        interview_time = time_match.group(1) if time_match else 'TBD'
+        
+        cursor.execute('''
+            INSERT INTO interview_schedules 
+            (candidate_id, call_sid, scheduled_slot, scheduled_at, interview_date, interview_time, 
+             status, confirmation_email_sent)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            candidate_id,
+            call_sid,
+            confirmed_slot,
+            datetime.now().isoformat(),
+            interview_day,
+            interview_time,
+            'scheduled',
+            email_sent
         ))
         
         conn.commit()
         conn.close()
-        logger.info(f"Saved conversation session: {session.call_sid}")
+        logger.info(f"Saved interview schedule for candidate {candidate_id}: {confirmed_slot}")
+        
+        # Update candidate status to indicate successful scheduling
+        update_candidate_status(candidate_id, "interview_scheduled", 
+                              f"Interview scheduled for {confirmed_slot}. Email sent: {email_sent}")
+        
     except Exception as e:
-        logger.error(f"Error saving conversation session: {e}")
+        logger.error(f"Error saving interview schedule: {e}")
+
+def log_system_event(level: str, component: str, action: str, details: str, call_sid: str = None, candidate_id: str = None):
+    """Log system events for comprehensive tracking"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            INSERT INTO system_logs 
+            (timestamp, log_level, component, action, details, call_sid, candidate_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            datetime.now().isoformat(),
+            level,
+            component,
+            action,
+            details,
+            call_sid,
+            candidate_id
+        ))
+        
+        conn.commit()
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"Error logging system event: {e}")
+
+def check_call_limit(candidate_id: str, max_attempts: int = 3) -> tuple[bool, int, bool]:
+    """
+    Check if candidate has reached the maximum call limit
+    Returns: (can_call, current_attempts, has_scheduled_interview)
+    """
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        # Count total call attempts for this candidate
+        cursor.execute('''
+            SELECT COUNT(*) FROM call_attempts 
+            WHERE candidate_id = ?
+        ''', (candidate_id,))
+        
+        current_attempts = cursor.fetchone()[0]
+        
+        # Check if candidate has already scheduled an interview
+        cursor.execute('''
+            SELECT COUNT(*) FROM interview_schedules 
+            WHERE candidate_id = ? AND status = 'scheduled'
+        ''', (candidate_id,))
+        
+        has_scheduled = cursor.fetchone()[0] > 0
+        
+        conn.close()
+        
+        # If they've scheduled an interview, they can receive calls (for confirmations, etc.)
+        if has_scheduled:
+            return True, current_attempts, True
+        
+        # If they haven't scheduled and reached the limit, no more calls
+        can_call = current_attempts < max_attempts
+        
+        logger.info(f"Call limit check for {candidate_id}: {current_attempts}/{max_attempts} attempts, scheduled: {has_scheduled}, can_call: {can_call}")
+        
+        return can_call, current_attempts, has_scheduled
+        
+    except Exception as e:
+        logger.error(f"Error checking call limit for candidate {candidate_id}: {e}")
+        # On error, allow the call but log it
+        return True, 0, False
+
+def update_candidate_status(candidate_id: str, status: str, notes: str = None):
+    """Update candidate status in the database"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        # Check if candidate exists in our local candidates table
+        cursor.execute('SELECT id FROM candidates WHERE id = ?', (candidate_id,))
+        exists = cursor.fetchone()
+        
+        if exists:
+            cursor.execute('''
+                UPDATE candidates 
+                SET status = ?, updated_at = ?, total_attempts = (
+                    SELECT COUNT(*) FROM call_attempts WHERE candidate_id = ?
+                )
+                WHERE id = ?
+            ''', (status, datetime.now().isoformat(), candidate_id, candidate_id))
+        else:
+            # Insert candidate if not exists (from MongoDB data)
+            cursor.execute('''
+                INSERT OR IGNORE INTO candidates 
+                (id, name, phone, email, position, company, created_at, updated_at, status, total_attempts)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                candidate_id,
+                'Unknown',  # These will be updated when we have full candidate data
+                'Unknown',
+                'Unknown',
+                'Unknown',
+                'Unknown',
+                datetime.now().isoformat(),
+                datetime.now().isoformat(),
+                status,
+                0
+            ))
+        
+        conn.commit()
+        conn.close()
+        
+        if notes:
+            log_system_event("INFO", "CANDIDATE_SYSTEM", "STATUS_UPDATE", 
+                           f"Status updated to {status}: {notes}", 
+                           candidate_id=candidate_id)
+        
+    except Exception as e:
+        logger.error(f"Error updating candidate status: {e}")
 
 def load_session_from_db(call_sid: str) -> Optional[ConversationSession]:
     """Load conversation session from database"""
@@ -893,9 +1229,29 @@ async def process_speech(request: Request):
                     session.status = "completed"
                     session.end_time = datetime.now().isoformat()
                     
-                    # Send confirmation email
+                    # Get candidate info for comprehensive tracking
                     candidate = session.candidate or CANDIDATE
+                    candidate_id = candidate.get('id') if isinstance(candidate, dict) else candidate.get('email', f"phone_{session.candidate_phone}")
+                    
+                    # Send confirmation email
                     email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                    
+                    # Save interview schedule to database
+                    save_interview_schedule(candidate_id, call_sid, confirmed_slot, email_sent)
+                    
+                    # Update call attempt with successful outcome
+                    save_call_attempt(
+                        candidate_id=candidate_id,
+                        call_sid=call_sid,
+                        phone_number=session.candidate_phone,
+                        outcome="interview_scheduled",
+                        notes=f"Interview successfully scheduled for {confirmed_slot}. Email sent: {email_sent}"
+                    )
+                    
+                    # Log successful scheduling
+                    log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
+                                    f"Interview scheduled for {confirmed_slot}. Email sent: {email_sent}", 
+                                    call_sid=call_sid, candidate_id=candidate_id)
                     
                     if email_sent:
                         ai_response = f"Perfect! I have you scheduled for {confirmed_slot}. You'll receive a detailed confirmation email shortly with all the interview information. We're looking forward to meeting with you!"
@@ -917,9 +1273,29 @@ async def process_speech(request: Request):
                     session.status = "completed"
                     session.end_time = datetime.now().isoformat()
                     
-                    # Send confirmation email
+                    # Get candidate info for comprehensive tracking
                     candidate = session.candidate or CANDIDATE
-                    email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                    candidate_id = candidate.get('id') if isinstance(candidate, dict) else candidate.get('email', f"phone_{session.candidate_phone}")
+                    
+                    # Send confirmation email
+                    email_sent = await send_interview_confirmation_email(candidate, mentioned_slot, call_sid)
+                    
+                    # Save interview schedule to database
+                    save_interview_schedule(candidate_id, call_sid, mentioned_slot, email_sent)
+                    
+                    # Update call attempt with successful outcome
+                    save_call_attempt(
+                        candidate_id=candidate_id,
+                        call_sid=call_sid,
+                        phone_number=session.candidate_phone,
+                        outcome="interview_scheduled",
+                        notes=f"Interview successfully scheduled for {mentioned_slot}. Email sent: {email_sent}"
+                    )
+                    
+                    # Log successful scheduling
+                    log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
+                                    f"Interview scheduled for {mentioned_slot}. Email sent: {email_sent}", 
+                                    call_sid=call_sid, candidate_id=candidate_id)
                     
                     if email_sent:
                         ai_response = f"Excellent! I have you down for {mentioned_slot}. You'll receive a detailed confirmation email with all the interview information. Thank you so much!"
@@ -1091,6 +1467,34 @@ async def make_actual_call(request: Request):
                 "message": f"Invalid Twilio credentials: {str(cred_error)}"
             }
         
+        # Get candidate ID for tracking
+        candidate_id = candidate_info.get('id') or candidate_info.get('email') or f"phone_{candidate_info.get('phone', 'unknown')}"
+        
+        # Check call limit (max 3 attempts if no interview scheduled)
+        can_call, current_attempts, has_scheduled = check_call_limit(candidate_id, max_attempts=3)
+        
+        if not can_call:
+            # Update candidate status to indicate they've reached the limit
+            update_candidate_status(candidate_id, "max_attempts_reached", 
+                                  f"Reached maximum {current_attempts} call attempts without scheduling")
+            
+            log_system_event("WARNING", "CALL_SYSTEM", "CALL_LIMIT_REACHED", 
+                           f"Call blocked: Candidate has reached maximum attempts ({current_attempts}/3) without scheduling", 
+                           candidate_id=candidate_id)
+            
+            return {
+                "status": "error",
+                "message": f"Maximum call attempts reached for this candidate ({current_attempts}/3). No interview was scheduled in previous calls.",
+                "current_attempts": current_attempts,
+                "has_scheduled_interview": has_scheduled,
+                "suggestion": "Consider sending an email or trying a different contact method."
+            }
+        
+        # Log call initiation
+        log_system_event("INFO", "CALL_SYSTEM", "CALL_INITIATED", 
+                        f"Initiating call to {candidate_info.get('phone')} for {candidate_info.get('name')} (Attempt {current_attempts + 1}/3)", 
+                        candidate_id=candidate_id)
+        
         # Create the call
         call = client.calls.create(
             url=webhook_url,
@@ -1102,6 +1506,16 @@ async def make_actual_call(request: Request):
 
         logger.info(f"Call initiated successfully - Call ID: {call.sid}")
         logger.info(f"Initial call status: {call.status}")
+        
+        # Save initial call attempt
+        save_call_attempt(
+            candidate_id=candidate_id,
+            call_sid=call.sid,
+            phone_number=candidate_info.get("phone"),
+            twilio_status=call.status,
+            outcome="initiated",
+            notes=f"Call initiated to {candidate_info.get('name')} for {candidate_info.get('position')} position"
+        )
 
         # Check call status after a moment
         import time
@@ -1109,20 +1523,47 @@ async def make_actual_call(request: Request):
         updated_call = client.calls(call.sid).fetch()
         logger.info(f"Updated call status: {updated_call.status}")
         
+        # Update call attempt with latest status
+        save_call_attempt(
+            candidate_id=candidate_id,
+            call_sid=call.sid,
+            phone_number=candidate_info.get("phone"),
+            twilio_status=updated_call.status,
+            call_duration=getattr(updated_call, 'duration', None),
+            error_code=getattr(updated_call, 'error_code', None),
+            error_message=getattr(updated_call, 'error_message', None),
+            outcome="in_progress" if updated_call.status in ['ringing', 'in-progress'] else updated_call.status,
+            notes=f"Call status updated: {updated_call.status}"
+        )
+        
         if updated_call.status == 'failed':
-            logger.error(f"Call failed. Error code: {updated_call.error_code}")
-            logger.error(f"Error message: {updated_call.error_message}")
+            error_code = getattr(updated_call, 'error_code', 'Unknown')
+            error_message = getattr(updated_call, 'error_message', 'Unknown error')
+            
+            logger.error(f"Call failed. Error code: {error_code}")
+            logger.error(f"Error message: {error_message}")
+            
+            # Log failure
+            log_system_event("ERROR", "CALL_SYSTEM", "CALL_FAILED", 
+                            f"Call failed: {error_message} (Code: {error_code})", 
+                            call_sid=call.sid, candidate_id=candidate_id)
+            
             return {
                 "status": "error",
-                "message": f"Call failed: {updated_call.error_message}",
-                "error_code": updated_call.error_code,
+                "message": f"Call failed: {error_message}",
+                "error_code": error_code,
                 "call_sid": call.sid
             }
         
-        # create or update in-memory session and persist
+        # Create or update in-memory session and persist
         session = get_or_create_session(call.sid, candidate_info.get("phone"), candidate=candidate_info)
         session.candidate = candidate_info
         save_conversation_session(session)
+        
+        # Log successful call setup
+        log_system_event("INFO", "CALL_SYSTEM", "CALL_ESTABLISHED", 
+                        f"Call established successfully with status: {updated_call.status}", 
+                        call_sid=call.sid, candidate_id=candidate_id)
 
         return {
             "status": "success",
@@ -1269,11 +1710,14 @@ async def call_specific_candidate(request: Request):
         updated_call = client.calls(call.sid).fetch()
         
         if updated_call.status == 'failed':
-            logger.error(f"Call failed. Error: {updated_call.error_message}")
+            error_message = getattr(updated_call, 'error_message', 'Unknown error')
+            error_code = getattr(updated_call, 'error_code', 'Unknown')
+            
+            logger.error(f"Call failed. Error: {error_message}")
             return {
                 "status": "error",
-                "message": f"Call failed: {updated_call.error_message}",
-                "error_code": updated_call.error_code,
+                "message": f"Call failed: {error_message}",
+                "error_code": error_code,
                 "call_sid": call.sid
             }
         
@@ -1352,6 +1796,291 @@ async def test_email(request: Request):
             "status": "error",
             "message": f"Test email failed: {str(e)}"
         }
+
+@app.get("/comprehensive-analytics")
+async def get_comprehensive_analytics():
+    """Get detailed analytics with all tracked data"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        # Call attempts analytics
+        cursor.execute('SELECT COUNT(*) FROM call_attempts')
+        total_call_attempts = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT outcome, COUNT(*) FROM call_attempts GROUP BY outcome')
+        outcome_stats = dict(cursor.fetchall())
+        
+        cursor.execute('SELECT twilio_status, COUNT(*) FROM call_attempts GROUP BY twilio_status')
+        status_stats = dict(cursor.fetchall())
+        
+        # Interview scheduling analytics
+        cursor.execute('SELECT COUNT(*) FROM interview_schedules WHERE status = "scheduled"')
+        interviews_scheduled = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT COUNT(*) FROM interview_schedules WHERE confirmation_email_sent = 1')
+        emails_sent = cursor.fetchone()[0]
+        
+        cursor.execute('SELECT scheduled_slot, COUNT(*) FROM interview_schedules GROUP BY scheduled_slot ORDER BY COUNT(*) DESC LIMIT 5')
+        popular_slots = cursor.fetchall()
+        
+        # Conversation analytics
+        cursor.execute('SELECT AVG(total_turns) FROM conversation_sessions WHERE total_turns > 0')
+        avg_conversation_turns = cursor.fetchone()[0] or 0
+        
+        cursor.execute('SELECT AVG(ai_confidence_avg) FROM conversation_sessions WHERE ai_confidence_avg > 0')
+        avg_ai_confidence = cursor.fetchone()[0] or 0
+        
+        cursor.execute('SELECT status, COUNT(*) FROM conversation_sessions GROUP BY status')
+        conversation_status_stats = dict(cursor.fetchall())
+        
+        # Recent activity (last 7 days)
+        cursor.execute('''
+            SELECT DATE(initiated_at) as call_date, COUNT(*) as calls_count 
+            FROM call_attempts 
+            WHERE initiated_at >= datetime('now', '-7 days') 
+            GROUP BY DATE(initiated_at) 
+            ORDER BY call_date DESC
+        ''')
+        recent_activity = cursor.fetchall()
+        
+        # System logs summary
+        cursor.execute('SELECT log_level, COUNT(*) FROM system_logs GROUP BY log_level')
+        log_stats = dict(cursor.fetchall())
+        
+        conn.close()
+        
+        return {
+            "call_analytics": {
+                "total_attempts": total_call_attempts,
+                "outcome_breakdown": outcome_stats,
+                "status_breakdown": status_stats,
+                "success_rate": round((outcome_stats.get('interview_scheduled', 0) / total_call_attempts * 100) if total_call_attempts > 0 else 0, 2)
+            },
+            "interview_analytics": {
+                "total_scheduled": interviews_scheduled,
+                "emails_sent": emails_sent,
+                "email_success_rate": round((emails_sent / interviews_scheduled * 100) if interviews_scheduled > 0 else 0, 2),
+                "popular_time_slots": [{"slot": slot[0], "count": slot[1]} for slot in popular_slots]
+            },
+            "conversation_analytics": {
+                "avg_turns_per_conversation": round(avg_conversation_turns, 2),
+                "avg_ai_confidence": round(avg_ai_confidence, 3),
+                "conversation_outcomes": conversation_status_stats
+            },
+            "recent_activity": [{"date": activity[0], "calls": activity[1]} for activity in recent_activity],
+            "system_health": {
+                "log_level_distribution": log_stats,
+                "total_logs": sum(log_stats.values())
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating comprehensive analytics: {e}")
+        return {"error": str(e)}
+
+@app.get("/call-attempts/{candidate_id}")
+async def get_candidate_call_history(candidate_id: str):
+    """Get detailed call history for a specific candidate"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT ca.*, cs.confirmed_slot, cs.status as conversation_status
+            FROM call_attempts ca
+            LEFT JOIN conversation_sessions cs ON ca.call_sid = cs.call_sid
+            WHERE ca.candidate_id = ?
+            ORDER BY ca.initiated_at DESC
+        ''', (candidate_id,))
+        
+        attempts = cursor.fetchall()
+        
+        # Get column names
+        columns = [desc[0] for desc in cursor.description]
+        
+        # Convert to list of dictionaries
+        call_history = []
+        for attempt in attempts:
+            attempt_dict = dict(zip(columns, attempt))
+            call_history.append(attempt_dict)
+        
+        # Get interview schedules for this candidate
+        cursor.execute('''
+            SELECT * FROM interview_schedules 
+            WHERE candidate_id = ?
+            ORDER BY scheduled_at DESC
+        ''', (candidate_id,))
+        
+        interviews = cursor.fetchall()
+        interview_columns = [desc[0] for desc in cursor.description]
+        interview_history = [dict(zip(interview_columns, interview)) for interview in interviews]
+        
+        conn.close()
+        
+        return {
+            "candidate_id": candidate_id,
+            "total_attempts": len(call_history),
+            "call_history": call_history,
+            "interview_history": interview_history,
+            "last_contact": call_history[0]['initiated_at'] if call_history else None
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting call history for candidate {candidate_id}: {e}")
+        return {"error": str(e)}
+
+@app.get("/system-logs")
+async def get_system_logs(limit: int = 50, level: str = None):
+    """Get system logs with optional filtering"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        if level:
+            cursor.execute('''
+                SELECT * FROM system_logs 
+                WHERE log_level = ?
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            ''', (level.upper(), limit))
+        else:
+            cursor.execute('''
+                SELECT * FROM system_logs 
+                ORDER BY timestamp DESC 
+                LIMIT ?
+            ''', (limit,))
+        
+        logs = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        
+        log_entries = [dict(zip(columns, log)) for log in logs]
+        
+        conn.close()
+        
+        return {
+            "logs": log_entries,
+            "total_returned": len(log_entries),
+            "filter_level": level
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting system logs: {e}")
+        return {"error": str(e)}
+
+@app.get("/candidate-limits")
+async def get_candidate_call_limits():
+    """Get all candidates with their call attempt counts and interview status"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        # Get MongoDB candidates
+        candidates_list = []
+        try:
+            mongo_candidates = {"status": "success", "candidates": get_all_candidates_from_mongo()}
+            if mongo_candidates.get("status") == "success":
+                candidates_list = mongo_candidates.get("candidates", [])
+        except:
+            pass
+        
+        candidate_info = {}
+        
+        # Process each candidate from MongoDB
+        for candidate in candidates_list:
+            candidate_id = candidate.get('id')
+            if candidate_id:
+                can_call, attempts, has_scheduled = check_call_limit(candidate_id)
+                
+                # Get last contact date
+                cursor.execute('''
+                    SELECT MAX(initiated_at) FROM call_attempts 
+                    WHERE candidate_id = ?
+                ''', (candidate_id,))
+                last_contact = cursor.fetchone()[0]
+                
+                # Get scheduled interviews count
+                cursor.execute('''
+                    SELECT COUNT(*) FROM interview_schedules 
+                    WHERE candidate_id = ? AND status = 'scheduled'
+                ''', (candidate_id,))
+                scheduled_count = cursor.fetchone()[0]
+                
+                candidate_info[candidate_id] = {
+                    "name": candidate.get('name'),
+                    "email": candidate.get('email'),
+                    "phone": candidate.get('phone'),
+                    "position": candidate.get('position'),
+                    "company": candidate.get('company'),
+                    "call_attempts": attempts,
+                    "can_receive_calls": can_call,
+                    "has_scheduled_interview": has_scheduled,
+                    "scheduled_interviews_count": scheduled_count,
+                    "last_contact_date": last_contact,
+                    "status": "interview_scheduled" if has_scheduled else ("max_attempts" if attempts >= 3 else "active")
+                }
+        
+        # Also check for any candidates in our local database that might not be in MongoDB
+        cursor.execute('''
+            SELECT DISTINCT candidate_id FROM call_attempts 
+            WHERE candidate_id NOT IN (''' + ','.join(['?' for _ in candidate_info.keys()]) + ''')
+        ''' if candidate_info else '''
+            SELECT DISTINCT candidate_id FROM call_attempts
+        ''', list(candidate_info.keys()) if candidate_info else [])
+        
+        local_only_candidates = cursor.fetchall()
+        
+        for (candidate_id,) in local_only_candidates:
+            can_call, attempts, has_scheduled = check_call_limit(candidate_id)
+            
+            cursor.execute('''
+                SELECT MAX(initiated_at) FROM call_attempts 
+                WHERE candidate_id = ?
+            ''', (candidate_id,))
+            last_contact = cursor.fetchone()[0]
+            
+            cursor.execute('''
+                SELECT COUNT(*) FROM interview_schedules 
+                WHERE candidate_id = ? AND status = 'scheduled'
+            ''', (candidate_id,))
+            scheduled_count = cursor.fetchone()[0]
+            
+            candidate_info[candidate_id] = {
+                "name": "Unknown (Local DB Only)",
+                "email": candidate_id if '@' in candidate_id else "Unknown",
+                "phone": candidate_id if candidate_id.startswith('phone_') else "Unknown",
+                "position": "Unknown",
+                "company": "Unknown",
+                "call_attempts": attempts,
+                "can_receive_calls": can_call,
+                "has_scheduled_interview": has_scheduled,
+                "scheduled_interviews_count": scheduled_count,
+                "last_contact_date": last_contact,
+                "status": "interview_scheduled" if has_scheduled else ("max_attempts" if attempts >= 3 else "active")
+            }
+        
+        conn.close()
+        
+        # Sort by call attempts (highest first) and then by last contact
+        sorted_candidates = sorted(
+            candidate_info.items(), 
+            key=lambda x: (x[1]["call_attempts"], x[1]["last_contact_date"] or ""), 
+            reverse=True
+        )
+        
+        return {
+            "candidates": [{"candidate_id": cid, **info} for cid, info in sorted_candidates],
+            "summary": {
+                "total_candidates": len(candidate_info),
+                "max_attempts_reached": len([c for c in candidate_info.values() if c["call_attempts"] >= 3 and not c["has_scheduled_interview"]]),
+                "interviews_scheduled": len([c for c in candidate_info.values() if c["has_scheduled_interview"]]),
+                "can_still_call": len([c for c in candidate_info.values() if c["can_receive_calls"]])
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting candidate call limits: {e}")
+        return {"error": str(e)}
 
 @app.get("/")
 async def root():
@@ -1610,8 +2339,8 @@ async def get_call_status(call_sid: str):
             "to": call.to,
             "duration": call.duration,
             "price": call.price,
-            "error_code": call.error_code,
-            "error_message": call.error_message,
+            "error_code": getattr(call, 'error_code', None),
+            "error_message": getattr(call, 'error_message', None),
             "start_time": str(call.start_time) if call.start_time else None,
             "end_time": str(call.end_time) if call.end_time else None
         }
