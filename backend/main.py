@@ -521,16 +521,19 @@ async def twilio_voice(request: Request):
         # Log the incoming request for debugging
         print(f"🔊 TWILIO WEBHOOK CALLED from IP: {request.client.host if request.client else 'unknown'}")
         
-        # Get form data from Twilio
-        form_data = await request.form()
-        call_sid = form_data.get("CallSid", "unknown")
-        from_number = form_data.get("From", "unknown")
-        to_number = form_data.get("To", "unknown")
-        
-        print(f"📞 Call Details: SID={call_sid}, From={from_number}, To={to_number}")
+        # Try to get form data from Twilio, handle missing multipart gracefully
+        try:
+            form_data = await request.form()
+            call_sid = form_data.get("CallSid", "unknown")
+            from_number = form_data.get("From", "unknown")
+            to_number = form_data.get("To", "unknown")
+            print(f"📞 Call Details: SID={call_sid}, From={from_number}, To={to_number}")
+        except Exception as form_error:
+            print(f"⚠️ Form parsing error (will still work): {form_error}")
+            call_sid = "unknown"
         
         # Return proper TwiML with correct headers
-        twiml_response = "<?xml version='1.0' encoding='UTF-8'?><Response><Say voice='alice'>Hello! This is AI Interview Scheduler. The call is working successfully. Goodbye!</Say><Hangup/></Response>"
+        twiml_response = "<?xml version='1.0' encoding='UTF-8'?><Response><Say voice='alice'>Hello! This is AI Interview Scheduler. The call is working successfully. Thank you for testing!</Say><Hangup/></Response>"
         
         print(f"✅ Returning TwiML: {twiml_response}")
         
