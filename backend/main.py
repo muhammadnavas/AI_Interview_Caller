@@ -11,6 +11,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 import logging
+import html
+import xml.etree.ElementTree as ET
 
 # Configure logging
 logging.basicConfig(
@@ -41,6 +43,13 @@ openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # Webhook URL - Auto-detect ngrok or use config
 def get_webhook_url():
+    # First check environment variable (for production deployment)
+    webhook_url = config("WEBHOOK_BASE_URL", default=None)
+    if webhook_url:
+        print(f"Using configured WEBHOOK_BASE_URL: {webhook_url}")
+        return webhook_url.rstrip('/')
+    
+    # Then try to detect ngrok for local development
     try:
         import requests
         response = requests.get("http://localhost:4040/api/tunnels", timeout=2)
@@ -51,15 +60,16 @@ def get_webhook_url():
                     public_url = tunnel["public_url"]
                     if public_url.startswith("https://"):
                         print(f"Auto-detected ngrok URL: {public_url}")
-                        return public_url
+                        return public_url.rstrip('/')
     except:
         pass
     
-    configured_url = config("WEBHOOK_BASE_URL", default="http://localhost:8000")
-    print(f"Using configured URL: {configured_url}")
-    return configured_url
+    # Fallback to localhost (will cause issues in production)
+    fallback_url = "http://localhost:8000"
+    print(f"WARNING: Using fallback URL: {fallback_url} - This won't work in production!")
+    return fallback_url
 
-WEBHOOK_BASE_URL = get_webhook_url()
+WEBHOOK_BASE_URL = get_webhook_url().rstrip('/')
 
 # FastAPI app
 app = FastAPI(title="AI Interview Caller", description="Automated interview scheduling with conversation tracking")
@@ -263,11 +273,62 @@ def save_conversation_session(session: ConversationSession):
     except Exception as e:
         logger.error(f"Error saving conversation session: {e}")
 
+def load_session_from_db(call_sid: str) -> Optional[ConversationSession]:
+    """Load conversation session from database"""
+    try:
+        conn = sqlite3.connect('conversations.db')
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM conversation_sessions WHERE call_sid = ?', (call_sid,))
+        session_data = cursor.fetchone()
+        
+        if not session_data:
+            conn.close()
+            return None
+        
+        # Reconstruct session from DB
+        turns = []
+        if session_data[6]:  # turns_json
+            turns_data = json.loads(session_data[6])
+            for turn_dict in turns_data:
+                turns.append(ConversationTurn(**turn_dict))
+        
+        session = ConversationSession(
+            call_sid=session_data[0],
+            candidate_phone=session_data[1],
+            start_time=session_data[2],
+            end_time=session_data[3],
+            status=session_data[4],
+            confirmed_slot=session_data[5],
+            turns=turns
+        )
+        
+        # Try to load candidate from DB if available
+        # For now, we'll set candidate to None and let it be loaded later if needed
+        session.candidate = None
+        
+        conn.close()
+        return session
+    except Exception as e:
+        logger.error(f"Error loading session from DB: {e}")
+        return None
+
 def get_or_create_session(call_sid: str, candidate_phone: str, candidate: Optional[dict] = None) -> ConversationSession:
-    """Get existing session or create new one"""
+    """Get existing session or create new one, loading from DB if needed"""
     if call_sid in conversation_sessions:
         return conversation_sessions[call_sid]
     
+    # Try to load from DB first
+    session = load_session_from_db(call_sid)
+    if session:
+        conversation_sessions[call_sid] = session
+        # Update candidate if provided and not set
+        if candidate and not session.candidate:
+            session.candidate = candidate
+            save_conversation_session(session)
+        return session
+    
+    # Create new session
     session = ConversationSession(
         call_sid=call_sid,
         candidate_phone=candidate_phone,
@@ -351,8 +412,8 @@ def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
             query = {"_id": ObjectId(candidate_id)}
             doc = coll.find_one(query)
         except Exception:
-            # fallback to searching by id or email field
-            doc = coll.find_one({"id": candidate_id}) or coll.find_one({"email": candidate_id})
+            # fallback to searching by id, email, or phone
+            doc = coll.find_one({"id": candidate_id}) or coll.find_one({"email": candidate_id}) or coll.find_one({"phone": candidate_id}) or coll.find_one({"phone_number": candidate_id})
 
         if not doc:
             return None
@@ -382,9 +443,8 @@ def get_ai_greeting(candidate: Optional[dict] = None) -> str:
     """Get AI greeting message. Use provided candidate dict or fall back to global CANDIDATE."""
     c = candidate or CANDIDATE
     name = c.get('name') if isinstance(c, dict) else 'Candidate'
-    company = c.get('company') if isinstance(c, dict) else 'Company'
-    position = c.get('position') if isinstance(c, dict) else 'position'
-    return f"Hello {name}! I'm calling from {company} regarding your {position} interview. Are you available to discuss timing?"
+    greeting = f"Hello {name}, this is a test call from AI Interview Scheduler."
+    return greeting
 
 def generate_ai_response(session: ConversationSession, user_input: str, intent: str, confidence: float) -> str:
     """Generate appropriate AI response based on conversation context and intent"""
@@ -444,52 +504,24 @@ Guidelines:
         logger.error(f"AI response generation failed: {e}")
         return f"Thank you. Are you available for an interview on {TIME_SLOTS[0]}? Please say 'confirm' if yes."
 
+@app.get("/test-webhook")
+async def test_webhook():
+    """Test endpoint to verify app is working"""
+    return {"status": "OK", "message": "Webhook endpoint is accessible"}
+
 @app.post("/twilio-voice")
 async def twilio_voice(request: Request):
-    """Entry point for Twilio call with validation"""
-    try:
-        form_data = await request.form()
-        call_sid = form_data.get("CallSid", "unknown")
-        from_number = form_data.get("From", CANDIDATE["phone"])
-        call_status = form_data.get("CallStatus", "unknown")
-        
-        logger.info(f"New call started - CallSid: {call_sid}, From: {from_number}, Status: {call_status}")
-        
-        # Validate that this is a legitimate Twilio call
-        if call_sid == "unknown":
-            logger.warning("Received call without valid CallSid")
-            return Response(
-                content="<Response><Say>Invalid call request.</Say><Hangup/></Response>",
-                media_type="application/xml"
-            )
-        
-        # Create new conversation session (if not created by outgoing call)
-        session = conversation_sessions.get(call_sid)
-        if not session:
-            session = get_or_create_session(call_sid, from_number)
-        # Use session-specific candidate if available
-        greeting = get_ai_greeting(session.candidate if session and session.candidate else None)
-        
-        logger.info(f"Starting conversation with greeting: {greeting}")
-        
-        response_xml = f"""
-        <Response>
-            <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="3" language="en-US">
-                <Say voice="alice" language="en-US">{greeting}</Say>
-            </Gather>
-            <Say voice="alice" language="en-US">I'm sorry, I didn't hear anything. We'll follow up by email. Goodbye.</Say>
-            <Hangup/>
-        </Response>
-        """
-        
-        return Response(content=response_xml.strip(), media_type="application/xml")
-        
-    except Exception as e:
-        logger.error(f"Error in twilio_voice endpoint: {e}")
-        return Response(
-            content="<Response><Say>Sorry, there was a system error. Goodbye.</Say><Hangup/></Response>",
-            media_type="application/xml"
-        )
+    """Entry point for Twilio call - simplified for testing"""
+    # Log to console and file
+    print("=== TWILIO WEBHOOK CALLED ===")
+    logger.info("=== TWILIO WEBHOOK CALLED ===")
+    
+    # Return bare minimum TwiML
+    twiml = "<Response><Say>Hello</Say><Hangup/></Response>"
+    print(f"Returning TwiML: {twiml}")
+    logger.info(f"Returning TwiML: {twiml}")
+    
+    return Response(content=twiml, media_type="text/xml")
 
 @app.post("/twilio-process")
 async def process_speech(request: Request):
@@ -513,22 +545,29 @@ async def process_speech(request: Request):
         # Handle empty or unclear speech
         if not speech_result or len(speech_result.strip()) < 2:
             logger.warning(f"Empty or very short speech result: '{speech_result}'")
-            response_xml = f"""
-            <Response>
-                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="3">
-                    <Say voice="alice" language="en-US">I'm sorry, I didn't catch that. Could you please repeat your response?</Say>
-                </Gather>
-                <Say voice="alice" language="en-US">Thank you. We'll follow up by email.</Say>
-                <Hangup/>
-            </Response>
-            """
-            return Response(content=response_xml.strip(), media_type="application/xml")
+            # Generate TwiML
+            root = ET.Element("Response")
+            gather = ET.SubElement(root, "Gather", {
+                "input": "speech",
+                "action": WEBHOOK_BASE_URL + "/twilio-process",
+                "method": "POST",
+                "timeout": "10"
+            })
+            say = ET.SubElement(gather, "Say", {"voice": "alice"})
+            say.text = html.escape("I'm sorry, I didn't catch that. Could you please repeat your response?")
+            say2 = ET.SubElement(root, "Say", {"voice": "alice"})
+            say2.text = html.escape("Thank you. We'll follow up by email.")
+            hangup = ET.SubElement(root, "Hangup")
+            response_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
+            logger.info(f"Response XML: {response_xml}")
+            return Response(content=response_xml, media_type="application/xml; charset=utf-8")
         
         # Get or create session
         session = conversation_sessions.get(call_sid)
         if not session:
             logger.warning(f"Session not found for CallSid: {call_sid}, creating new session")
-            session = get_or_create_session(call_sid, CANDIDATE["phone"])
+            to_number = form_data.get("To", CANDIDATE["phone"])
+            session = get_or_create_session(call_sid, to_number)
         
         # Analyze user intent
         intent, intent_confidence = analyze_intent(speech_result)
@@ -554,7 +593,7 @@ async def process_speech(request: Request):
             save_conversation_session(session)
             
             return Response(
-                content=f"<Response><Say voice='alice' language='en-US'>{ai_response}</Say><Hangup/></Response>",
+                content=f"<Response><Say voice='alice'>{html.escape(ai_response)}</Say><Hangup/></Response>",
                 media_type="application/xml"
             )
         
@@ -584,13 +623,12 @@ async def process_speech(request: Request):
             
             logger.info(f"CONFIRMATION DETECTED! Confirmed slot: {confirmed_slot} - Call completed in {turn_number} turns")
             
-            response_xml = f"""
-            <Response>
-                <Say voice="alice" language="en-US">{ai_response}</Say>
-                <Hangup/>
-            </Response>
-            """
-            return Response(content=response_xml.strip(), media_type="application/xml")
+            root = ET.Element("Response")
+            say = ET.SubElement(root, "Say", {"voice": "alice"})
+            say.text = html.escape(ai_response)
+            hangup = ET.SubElement(root, "Hangup")
+            response_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
+            return Response(content=response_xml, media_type="application/xml; charset=utf-8")
     
         # Handle rejection or request for different time
         elif intent == "rejection":
@@ -621,13 +659,12 @@ async def process_speech(request: Request):
                 session.turns.append(turn)
                 save_conversation_session(session)
                 
-                response_xml = f"""
-                <Response>
-                    <Say voice="alice" language="en-US">{ai_response}</Say>
-                    <Hangup/>
-                </Response>
-                """
-                return Response(content=response_xml.strip(), media_type="application/xml")
+                root = ET.Element("Response")
+                say = ET.SubElement(root, "Say", {"voice": "alice"})
+                say.text = html.escape(ai_response)
+                hangup = ET.SubElement(root, "Hangup")
+                response_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
+                return Response(content=response_xml, media_type="application/xml; charset=utf-8")
         
         # Generate contextual AI response
         else:
@@ -649,29 +686,35 @@ async def process_speech(request: Request):
         
         # Determine if call should end
         if session.status in ["completed", "failed"]:
-            response_xml = f"""
-            <Response>
-                <Say voice="alice" language="en-US">{ai_response}</Say>
-                <Hangup/>
-            </Response>
-            """
+            root = ET.Element("Response")
+            say = ET.SubElement(root, "Say", {"voice": "alice"})
+            say.text = html.escape(ai_response)
+            hangup = ET.SubElement(root, "Hangup")
+            response_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
         else:
-            response_xml = f"""
-            <Response>
-                <Say voice="alice" language="en-US">{ai_response}</Say>
-                <Gather input="speech" action="{WEBHOOK_BASE_URL}/twilio-process" method="POST" timeout="10" speechTimeout="3">
-                    <Say voice="alice" language="en-US">Please let me know which time works for you.</Say>
-                </Gather>
-                <Say voice="alice" language="en-US">Thank you. We'll send you an email with the details.</Say>
-            </Response>
-            """
+            root = ET.Element("Response")
+            say = ET.SubElement(root, "Say", {"voice": "alice"})
+            say.text = html.escape(ai_response)
+            gather = ET.SubElement(root, "Gather", {
+                "input": "speech",
+                "action": WEBHOOK_BASE_URL + "/twilio-process",
+                "method": "POST",
+                "timeout": "10"
+            })
+            say2 = ET.SubElement(gather, "Say", {"voice": "alice"})
+            say2.text = html.escape("Please let me know which time works for you.")
+            say3 = ET.SubElement(root, "Say", {"voice": "alice"})
+            say3.text = html.escape("Thank you. We'll send you an email with the details.")
+            response_xml = ET.tostring(root, encoding="unicode", xml_declaration=True)
         
-        return Response(content=response_xml.strip(), media_type="application/xml")
+        logger.info(f"Response XML: {response_xml}")
+        
+        return Response(content=response_xml, media_type="application/xml; charset=utf-8")
     
     except Exception as e:
         logger.error(f"Error in process_speech endpoint: {e}")
         return Response(
-            content="<Response><Say voice='alice' language='en-US'>Sorry, there was a system error. We'll follow up by email. Goodbye.</Say><Hangup/></Response>",
+            content="<Response><Say voice='alice'>Sorry, there was a system error. We'll follow up by email. Goodbye.</Say><Hangup/></Response>",
             media_type="application/xml"
         )
 
@@ -826,13 +869,12 @@ async def root():
     return {
         "message": "AI Interview Caller",
         "version": "2.0.0",
-        "candidate": CANDIDATE,
-        "available_slots": TIME_SLOTS,
-        "active_conversations": len([s for s in conversation_sessions.values() if s.status == "active"]),
+        "status": "WORKING",
+        "webhook_url": WEBHOOK_BASE_URL,
+        "twilio_webhook_test": f"{WEBHOOK_BASE_URL}/twilio-voice",
         "config": {
             "twilio_configured": bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER),
             "openai_configured": bool(OPENAI_API_KEY),
-            "webhook_url": WEBHOOK_BASE_URL,
             "database_enabled": True,
         },
     }

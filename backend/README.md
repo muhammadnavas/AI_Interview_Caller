@@ -80,7 +80,7 @@ ngrok http 8000
 ## 📊 API Endpoints
 
 ### Core Functionality
-- `POST /make-actual-call` - Initiate automated interview call
+- `POST /make-actual-call` - Initiate automated interview call (accepts `candidate_id` for DB-backed candidates)
 - `POST /twilio-voice` - Twilio webhook entry point (called by Twilio)
 - `POST /twilio-process` - Process speech responses (called by Twilio)
 
@@ -90,6 +90,42 @@ ngrok http 8000
 - `GET /conversations/{call_sid}` - Get specific conversation details
 - `GET /analytics` - Conversation analytics and success metrics
 - `DELETE /conversations/{call_sid}` - Delete conversation record
+
+### Initiating Calls with Candidate ID
+
+The `/make-actual-call` endpoint supports fetching candidate details from MongoDB by providing a `candidate_id` in the request body. This allows the recruiter platform to trigger personalized calls.
+
+**Request Body**:
+```json
+{
+  "candidate_id": "650e4f3b9f1b2e5a8c1d0f12"
+}
+```
+
+**Response**:
+```json
+{
+  "status": "success",
+  "message": "Call initiated to +1234567890",
+  "call_sid": "CA1234567890abcdef",
+  "call_status": "queued",
+  "webhook_url": "https://your-webhook-url/twilio-voice",
+  "candidate": "John Doe",
+  "initial_status": "queued"
+}
+```
+
+**Example curl**:
+```bash
+curl -X POST "https://your-backend-url/make-actual-call" \
+  -H "Content-Type: application/json" \
+  -d '{"candidate_id": "650e4f3b9f1b2e5a8c1d0f12"}'
+```
+
+**Candidate ID Lookup**:
+- First tries MongoDB ObjectId lookup
+- Falls back to searching by `id` or `email` fields
+- If no `candidate_id` provided, uses default candidate from env/MongoDB
 
 ## 🗂️ Database Schema
 
