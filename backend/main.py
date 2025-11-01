@@ -16,6 +16,8 @@ import xml.etree.ElementTree as ET
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from pymongo import MongoClient
+from bson import ObjectId
 
 # Configure logging
 logging.basicConfig(
@@ -208,6 +210,54 @@ def get_all_candidates_from_mongo() -> list:
     except Exception as e:
         logger.warning(f"Could not load candidates from MongoDB: {e}")
         return []
+
+
+def find_candidate_by_phone(phone_number: str) -> Optional[dict]:
+    """Find a candidate by phone number in MongoDB"""
+    if not phone_number:
+        return None
+        
+    try:
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
+        db_name = config("MONGODB_DB", default="ai_interview_schedule")
+        coll_name = config("MONGODB_COLLECTION", default="candidates")
+
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Try different phone number variations
+        phone_variations = [
+            phone_number,
+            phone_number.replace(" ", "").replace("-", "").replace("(", "").replace(")", ""),
+            phone_number if phone_number.startswith("+") else f"+1{phone_number.replace('+', '')}",
+            phone_number.replace("+1", "") if phone_number.startswith("+1") else phone_number
+        ]
+
+        for phone_var in phone_variations:
+            doc = coll.find_one({"$or": [
+                {"phone": phone_var},
+                {"phone_number": phone_var}
+            ]})
+            
+            if doc:
+                candidate = {
+                    "id": str(doc.get("_id")),
+                    "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
+                    "phone": doc.get("phone") or doc.get("phone_number"),
+                    "email": doc.get("email"),
+                    "position": doc.get("position") or doc.get("role"),
+                    "company": doc.get("company") or doc.get("employer"),
+                    "call_tracking": doc.get("call_tracking", {})
+                }
+                logger.info(f"Found candidate by phone {phone_number}: {candidate.get('name')}")
+                return candidate
+                
+        logger.warning(f"No candidate found for phone number: {phone_number}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"Error finding candidate by phone {phone_number}: {e}")
+        return None
 
 
 # Prefer candidate from MongoDB when available, fall back to env vars
@@ -995,8 +1045,23 @@ def update_candidate_interview_scheduled(candidate_id: str, interview_details: d
         }
 
         result = coll.update_one(query, update_data)
-        logger.info(f"Updated interview details for candidate {candidate_id}: {interview_details.get('scheduled_slot')}")
-        return result.modified_count > 0
+        
+        if result.modified_count > 0:
+            logger.info(f"✅ Successfully updated interview details for candidate {candidate_id}: {interview_details.get('scheduled_slot')}")
+            # Verify the update by fetching the document
+            doc = coll.find_one(query)
+            if doc:
+                logger.info(f"✅ Verification: Candidate status is now {doc.get('call_tracking', {}).get('status')}")
+            return True
+        else:
+            logger.error(f"❌ Failed to update candidate {candidate_id}. Query: {query}")
+            # Check if document exists
+            doc = coll.find_one(query)
+            if doc:
+                logger.error(f"❌ Document exists but update failed. Current call_tracking: {doc.get('call_tracking')}")
+            else:
+                logger.error(f"❌ No document found with candidate_id: {candidate_id}")
+            return False
 
     except Exception as e:
         logger.error(f"Error updating interview details for candidate {candidate_id}: {e}")
@@ -1092,8 +1157,12 @@ def get_ai_greeting(candidate: Optional[dict] = None) -> str:
 
 async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str, call_sid: str):
     """Send professional interview confirmation email"""
+    logger.info(f"📧 Attempting to send interview confirmation email for call {call_sid}")
+    logger.info(f"📧 Candidate: {candidate.get('name', 'Unknown')} ({candidate.get('email', 'No email')})")
+    logger.info(f"📧 Confirmed slot: {confirmed_slot}")
+    
     if not all([SMTP_USERNAME, SMTP_PASSWORD, SENDER_EMAIL]):
-        logger.warning("SMTP credentials not configured. Cannot send confirmation email.")
+        logger.warning("❌ SMTP credentials not configured. Cannot send confirmation email.")
         return False
     
     try:
@@ -1231,7 +1300,7 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         server.send_message(msg)
         server.quit()
         
-        logger.info(f"Interview confirmation email sent successfully to {candidate_email} for slot: {confirmed_slot}")
+        logger.info(f"✅ Interview confirmation email sent successfully to {candidate_email} for slot: {confirmed_slot}")
         return True
         
     except Exception as e:
@@ -1401,7 +1470,15 @@ async def process_speech(request: Request):
         session = conversation_sessions.get(call_sid)
         if not session:
             logger.warning(f"Session not found for CallSid: {call_sid}, creating new session")
-            session = get_or_create_session(call_sid, form_data.get("From", ""))
+            # Try to load from database first
+            session = load_session_from_db(call_sid)
+            if session:
+                conversation_sessions[call_sid] = session
+            else:
+                # Find candidate by phone number to include in session
+                caller_phone = form_data.get("From", "")
+                candidate = find_candidate_by_phone(caller_phone)
+                session = get_or_create_session(call_sid, caller_phone, candidate)
         
         # Analyze user intent and conversation context
         intent, intent_confidence = analyze_intent(speech_result)
@@ -1438,7 +1515,21 @@ async def process_speech(request: Request):
                     
                     # Get candidate info for comprehensive tracking
                     candidate = session.candidate or CANDIDATE
-                    candidate_id = candidate.get('id') if isinstance(candidate, dict) else candidate.get('email', f"phone_{session.candidate_phone}")
+                    if isinstance(candidate, dict) and candidate.get('id'):
+                        candidate_id = candidate.get('id')
+                    elif session.candidate_phone:
+                        # If no candidate ID, try to find candidate by phone
+                        found_candidate = find_candidate_by_phone(session.candidate_phone)
+                        if found_candidate:
+                            candidate_id = found_candidate.get('id')
+                            session.candidate = found_candidate  # Update session with found candidate
+                            candidate = found_candidate  # Update candidate for email
+                        else:
+                            candidate_id = f"phone_{session.candidate_phone}"
+                    else:
+                        candidate_id = candidate.get('email', 'unknown')
+                    
+                    logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
                     
                     # Send confirmation email
                     email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
@@ -1479,7 +1570,21 @@ async def process_speech(request: Request):
                     
                     # Get candidate info for comprehensive tracking
                     candidate = session.candidate or CANDIDATE
-                    candidate_id = candidate.get('id') if isinstance(candidate, dict) else candidate.get('email', f"phone_{session.candidate_phone}")
+                    if isinstance(candidate, dict) and candidate.get('id'):
+                        candidate_id = candidate.get('id')
+                    elif session.candidate_phone:
+                        # If no candidate ID, try to find candidate by phone
+                        found_candidate = find_candidate_by_phone(session.candidate_phone)
+                        if found_candidate:
+                            candidate_id = found_candidate.get('id')
+                            session.candidate = found_candidate  # Update session with found candidate
+                            candidate = found_candidate  # Update candidate for email
+                        else:
+                            candidate_id = f"phone_{session.candidate_phone}"
+                    else:
+                        candidate_id = candidate.get('email', 'unknown')
+                    
+                    logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
                     
                     # Send confirmation email
                     email_sent = await send_interview_confirmation_email(candidate, mentioned_slot, call_sid)
