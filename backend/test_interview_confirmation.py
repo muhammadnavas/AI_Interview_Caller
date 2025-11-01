@@ -24,7 +24,10 @@ def test_candidate_lookup():
     candidates = load_candidate_from_mongo()
     print(f"Found {len(candidates)} candidates")
     for candidate in candidates:
-        print(f"  - {candidate.get('name', 'Unknown')} ({candidate.get('phone', 'No phone')}) ID: {candidate.get('id', 'No ID')}")
+        if isinstance(candidate, dict):
+            print(f"  - {candidate.get('name', 'Unknown')} ({candidate.get('phone', 'No phone')}) ID: {candidate.get('id', 'No ID')}")
+        else:
+            print(f"  - Invalid candidate format: {candidate}")
     
     if candidates:
         # Test finding by phone

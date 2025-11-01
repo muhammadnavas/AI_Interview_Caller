@@ -16,8 +16,15 @@ import xml.etree.ElementTree as ET
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from pymongo import MongoClient
-from bson import ObjectId
+try:
+    from pymongo import MongoClient
+    from bson import ObjectId
+    MONGODB_AVAILABLE = True
+except ImportError:
+    logger.warning("PyMongo not available. MongoDB features will be disabled.")
+    MONGODB_AVAILABLE = False
+    MongoClient = None
+    ObjectId = None
 
 # Configure logging
 logging.basicConfig(
@@ -214,7 +221,8 @@ def get_all_candidates_from_mongo() -> list:
 
 def find_candidate_by_phone(phone_number: str) -> Optional[dict]:
     """Find a candidate by phone number in MongoDB"""
-    if not phone_number:
+    if not phone_number or not MONGODB_AVAILABLE:
+        logger.warning(f"Cannot find candidate by phone: {'No phone number' if not phone_number else 'MongoDB not available'}")
         return None
         
     try:
@@ -1504,6 +1512,7 @@ async def process_speech(request: Request):
                 
         elif conversation_stage == "scheduling":
             # Main scheduling conversation
+            logger.info(f"🔄 Processing scheduling stage - Intent: {intent}, Confidence: {intent_confidence}")
             if intent == "confirmation" and intent_confidence > 0.6:
                 # Look for specific time mentioned
                 mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
@@ -1532,16 +1541,23 @@ async def process_speech(request: Request):
                     logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
                     
                     # Send confirmation email
-                    email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                    try:
+                        email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                    except Exception as email_error:
+                        logger.error(f"Failed to send confirmation email: {email_error}")
+                        email_sent = False
                     
                     # Save interview schedule to MongoDB
-                    interview_details = {
-                        "scheduled_slot": confirmed_slot,
-                        "call_sid": call_sid,
-                        "email_sent": email_sent,
-                        "scheduled_at": datetime.now().isoformat()
-                    }
-                    update_candidate_interview_scheduled(candidate_id, interview_details)
+                    try:
+                        interview_details = {
+                            "scheduled_slot": confirmed_slot,
+                            "call_sid": call_sid,
+                            "email_sent": email_sent,
+                            "scheduled_at": datetime.now().isoformat()
+                        }
+                        update_candidate_interview_scheduled(candidate_id, interview_details)
+                    except Exception as mongo_error:
+                        logger.error(f"Failed to update MongoDB: {mongo_error}")
                     
                     # Log successful scheduling
                     log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
@@ -1562,7 +1578,9 @@ async def process_speech(request: Request):
                 next_action = "gather_preferences"
             elif any(day.lower() in speech_result.lower() for day in ["monday", "tuesday", "wednesday", "thursday"]):
                 # They mentioned a day, try to match it
+                logger.info(f"🗓️ Day mentioned in speech: '{speech_result}' - Looking for time slot match")
                 mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
+                logger.info(f"🎯 Found time slot match: {mentioned_slot}")
                 if mentioned_slot:
                     session.confirmed_slot = mentioned_slot
                     session.status = "completed"
@@ -1587,16 +1605,23 @@ async def process_speech(request: Request):
                     logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
                     
                     # Send confirmation email
-                    email_sent = await send_interview_confirmation_email(candidate, mentioned_slot, call_sid)
+                    try:
+                        email_sent = await send_interview_confirmation_email(candidate, mentioned_slot, call_sid)
+                    except Exception as email_error:
+                        logger.error(f"Failed to send confirmation email: {email_error}")
+                        email_sent = False
                     
                     # Save interview schedule to MongoDB
-                    interview_details = {
-                        "scheduled_slot": mentioned_slot,
-                        "call_sid": call_sid,
-                        "email_sent": email_sent,
-                        "scheduled_at": datetime.now().isoformat()
-                    }
-                    update_candidate_interview_scheduled(candidate_id, interview_details)
+                    try:
+                        interview_details = {
+                            "scheduled_slot": mentioned_slot,
+                            "call_sid": call_sid,
+                            "email_sent": email_sent,
+                            "scheduled_at": datetime.now().isoformat()
+                        }
+                        update_candidate_interview_scheduled(candidate_id, interview_details)
+                    except Exception as mongo_error:
+                        logger.error(f"Failed to update MongoDB: {mongo_error}")
                     
                     # Log successful scheduling
                     log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
