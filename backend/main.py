@@ -515,44 +515,12 @@ async def twilio_voice_get():
     return {"message": "Twilio webhook endpoint is ready", "method": "POST required for actual calls"}
 
 @app.post("/twilio-voice")
-async def twilio_voice(request: Request):
-    """Twilio webhook endpoint with proper headers and logging"""
-    try:
-        # Log the incoming request for debugging
-        print(f"🔊 TWILIO WEBHOOK CALLED from IP: {request.client.host if request.client else 'unknown'}")
-        
-        # Try to get form data from Twilio, handle missing multipart gracefully
-        try:
-            form_data = await request.form()
-            call_sid = form_data.get("CallSid", "unknown")
-            from_number = form_data.get("From", "unknown")
-            to_number = form_data.get("To", "unknown")
-            print(f"📞 Call Details: SID={call_sid}, From={from_number}, To={to_number}")
-        except Exception as form_error:
-            print(f"⚠️ Form parsing error (will still work): {form_error}")
-            call_sid = "unknown"
-        
-        # Return proper TwiML with correct headers
-        twiml_response = "<?xml version='1.0' encoding='UTF-8'?><Response><Say voice='alice'>Hello! This is AI Interview Scheduler. The call is working successfully. Thank you for testing!</Say><Hangup/></Response>"
-        
-        print(f"✅ Returning TwiML: {twiml_response}")
-        
-        return Response(
-            content=twiml_response,
-            media_type="application/xml; charset=utf-8",
-            headers={
-                "Cache-Control": "no-cache",
-                "Content-Type": "application/xml; charset=utf-8"
-            }
-        )
-    except Exception as e:
-        print(f"❌ ERROR in webhook: {e}")
-        # Return error TwiML
-        error_twiml = "<?xml version='1.0' encoding='UTF-8'?><Response><Say voice='alice'>Sorry, there was an error. Please try again later.</Say><Hangup/></Response>"
-        return Response(
-            content=error_twiml,
-            media_type="application/xml; charset=utf-8"
-        )
+def twilio_voice():
+    """Bulletproof Twilio webhook"""
+    return Response(
+        content="<Response><Say>Hello! This is AI Interview Scheduler. Your webhook is now working! Goodbye!</Say><Hangup/></Response>",
+        media_type="text/xml"
+    )
 
 @app.post("/twilio-process")
 async def process_speech(request: Request):
