@@ -201,7 +201,7 @@ def get_all_candidates_from_mongo() -> list:
         
         for doc in docs:
             candidate = {
-                "id": str(doc.get("_id")),
+                "candidate_id": doc.get("candidate_id", str(doc.get("_id"))),  # Use candidate_id field, fallback to _id
                 "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
                 "phone": doc.get("phone") or doc.get("phone_number"),
                 "email": doc.get("email"),
@@ -1289,6 +1289,24 @@ async def test_webhook():
     """Test endpoint to verify app is working"""
     return {"status": "OK", "message": "Webhook endpoint is accessible", "webhook_url": f"{WEBHOOK_BASE_URL}/twilio-voice"}
 
+@app.post("/test-json")
+async def test_json_parsing(request: Request):
+    """Test JSON parsing for debugging"""
+    try:
+        body = await request.json()
+        return {
+            "status": "success", 
+            "message": "JSON parsed successfully",
+            "received_data": body,
+            "candidate_id": body.get("candidate_id", "NOT_PROVIDED")
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"JSON parsing failed: {str(e)}",
+            "help": "Send JSON like: {\"candidate_id\": \"your_id_here\"}"
+        }
+
 @app.get("/twilio-voice")
 async def twilio_voice_get():
     """GET endpoint for webhook verification"""
@@ -1967,14 +1985,21 @@ async def get_candidates():
 async def call_specific_candidate(request: Request):
     """Make a professional call to a specific candidate by ID"""
     try:
-        # Get candidate ID from request body
-        body = await request.json()
+        # Get candidate ID from request body with better error handling
+        try:
+            body = await request.json()
+        except Exception as json_error:
+            return {
+                "status": "error",
+                "message": f"Invalid JSON in request body: {str(json_error)}. Please send valid JSON with candidate_id field."
+            }
+        
         candidate_id = body.get("candidate_id")
         
         if not candidate_id:
             return {
                 "status": "error",
-                "message": "candidate_id is required"
+                "message": "candidate_id is required in JSON body. Example: {\"candidate_id\": \"CAND_12345678\"}"
             }
         
         # Validate Twilio credentials
@@ -2207,7 +2232,7 @@ async def list_all_candidates():
         formatted_candidates = []
         for candidate in candidates:
             formatted_candidates.append({
-                "id": candidate.get("candidate_id", str(candidate.get("_id", "unknown"))),  # Use candidate_id field
+                "id": candidate.get("candidate_id", "unknown"),  # Use candidate_id field from get_all_candidates_from_mongo
                 "name": candidate.get("name", "Unknown"),
                 "phone": candidate.get("phone", "No phone"),
                 "email": candidate.get("email", "No email"),
