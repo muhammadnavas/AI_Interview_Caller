@@ -334,6 +334,24 @@ def init_database():
         candidates_coll = db["candidates"]
         candidates_coll.create_index("phone")
         candidates_coll.create_index("email")
+        candidates_coll.create_index("candidate_id", unique=True)  # New unique candidate_id field
+        
+        # Update existing candidates to have candidate_id field
+        candidates_without_id = candidates_coll.find({"candidate_id": {"$exists": False}})
+        for candidate in candidates_without_id:
+            import uuid
+            # Generate unique candidate ID
+            candidate_id = f"CAND_{str(uuid.uuid4())[:8].upper()}"
+            candidates_coll.update_one(
+                {"_id": candidate["_id"]},
+                {"$set": {"candidate_id": candidate_id}}
+            )
+            logger.info(f"Added candidate_id {candidate_id} to existing candidate {candidate.get('name', 'Unknown')}")
+        
+        # Create other collections with candidate_id references
+        conversations_coll = db["conversations"]
+        conversations_coll.create_index("candidate_id")
+        conversations_coll.create_index("call_sid")
         
         # Create system_logs collection
         logs_coll = db["system_logs"]
@@ -344,6 +362,59 @@ def init_database():
         logger.error(f"Failed to initialize MongoDB: {e}")
     
     # MongoDB only - no SQLite tables needed
+
+def create_candidate_with_id(name: str, phone: str, email: str = None, position: str = None, company: str = None) -> str:
+    """Create a new candidate with a unique candidate_id and return the candidate_id"""
+    try:
+        from pymongo import MongoClient
+        import uuid
+        
+        client = MongoClient('mongodb://localhost:27017/')
+        db = client['interview_scheduler']
+        
+        # Generate unique candidate ID
+        candidate_id = f"CAND_{str(uuid.uuid4())[:8].upper()}"
+        
+        # Check if candidate already exists by phone or email
+        existing = db.candidates.find_one({"$or": [{"phone": phone}, {"email": email}]}) if email else db.candidates.find_one({"phone": phone})
+        
+        if existing:
+            # If candidate exists but doesn't have candidate_id, add it
+            if not existing.get("candidate_id"):
+                db.candidates.update_one(
+                    {"_id": existing["_id"]},
+                    {"$set": {"candidate_id": candidate_id}}
+                )
+                logger.info(f"Added candidate_id {candidate_id} to existing candidate")
+                return candidate_id
+            else:
+                logger.info(f"Candidate already exists with ID {existing['candidate_id']}")
+                return existing["candidate_id"]
+        
+        # Create new candidate with candidate_id
+        candidate_doc = {
+            "candidate_id": candidate_id,
+            "name": name,
+            "phone": phone,
+            "email": email or "",
+            "position": position or "",
+            "company": company or "",
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "status": "active",
+            "call_history": [],
+            "interview_status": "not_scheduled"
+        }
+        
+        result = db.candidates.insert_one(candidate_doc)
+        client.close()
+        
+        logger.info(f"Created new candidate with ID {candidate_id}: {name}")
+        return candidate_id
+        
+    except Exception as e:
+        logger.error(f"Error creating candidate: {e}")
+        return None
 
 
 def save_call_attempt(candidate_id: str, call_sid: str, phone_number: str, twilio_status: str = None, 
@@ -478,8 +549,8 @@ def check_call_limit(candidate_id: str, max_attempts: int = 3) -> tuple[bool, in
         client = MongoClient('mongodb://localhost:27017/')
         db = client['interview_scheduler']
         
-        # Find candidate in MongoDB
-        candidate = db.candidates.find_one({"phone": candidate_id}) or db.candidates.find_one({"_id": candidate_id})
+        # Find candidate in MongoDB using candidate_id field
+        candidate = db.candidates.find_one({"candidate_id": candidate_id})
         
         if not candidate:
             client.close()
@@ -518,9 +589,9 @@ def update_candidate_status(candidate_id: str, status: str, notes: str = None):
         client = MongoClient('mongodb://localhost:27017/')
         db = client['interview_scheduler']
         
-        # Update candidate status in MongoDB
+        # Update candidate status in MongoDB using candidate_id field
         result = db.candidates.update_one(
-            {"$or": [{"phone": candidate_id}, {"_id": candidate_id}]},
+            {"candidate_id": candidate_id},
             {
                 "$set": {
                     "status": status,
@@ -698,7 +769,7 @@ def analyze_intent(text: str) -> tuple[str, float]:
 
 
 def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
-    """Fetch candidate document from MongoDB by _id or by id string field.
+    """Fetch candidate document from MongoDB by candidate_id field (not ObjectId).
 
     Returns normalized dict or None.
     """
@@ -720,14 +791,18 @@ def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
         db = client[db_name]
         coll = db[coll_name]
 
-        # try ObjectId first
-        try:
-            from bson import ObjectId
-            query = {"_id": ObjectId(candidate_id)}
-            doc = coll.find_one(query)
-        except Exception:
-            # fallback to searching by id, email, or phone
-            doc = coll.find_one({"id": candidate_id}) or coll.find_one({"email": candidate_id}) or coll.find_one({"phone": candidate_id}) or coll.find_one({"phone_number": candidate_id})
+        # First try the new candidate_id field
+        doc = coll.find_one({"candidate_id": candidate_id})
+        
+        # If not found, try ObjectId for backward compatibility
+        if not doc:
+            try:
+                from bson import ObjectId
+                query = {"_id": ObjectId(candidate_id)}
+                doc = coll.find_one(query)
+            except Exception:
+                # fallback to searching by id, email, or phone for old data
+                doc = coll.find_one({"id": candidate_id}) or coll.find_one({"email": candidate_id}) or coll.find_one({"phone": candidate_id}) or coll.find_one({"phone_number": candidate_id})
 
         if not doc:
             return None
@@ -2132,7 +2207,7 @@ async def list_all_candidates():
         formatted_candidates = []
         for candidate in candidates:
             formatted_candidates.append({
-                "id": candidate.get("id"),
+                "id": candidate.get("candidate_id", str(candidate.get("_id", "unknown"))),  # Use candidate_id field
                 "name": candidate.get("name", "Unknown"),
                 "phone": candidate.get("phone", "No phone"),
                 "email": candidate.get("email", "No email"),
