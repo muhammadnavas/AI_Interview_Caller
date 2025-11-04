@@ -62,14 +62,14 @@ export default function Home() {
 			setCallLoading(true);
 			setCallStatus('Initiating call...');
 
-			const response = await fetch(`${API_BASE}/make-actual-call`, {
+			const response = await fetch(`${API_BASE}/test-call`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 			});
 
 			const data = await response.json();
 			if (data.status === 'success') {
-				setCallStatus(`Call initiated! Call ID: ${data.call_sid}`);
+				setCallStatus(`Call initiated! Call ID: ${data.call_result?.call_sid || 'N/A'}`);
 				setTimeout(fetchConversations, 2000);
 			} else {
 				setCallStatus(`Call failed: ${data.message}`);

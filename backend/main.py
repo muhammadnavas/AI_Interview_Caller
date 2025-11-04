@@ -2503,29 +2503,35 @@ async def root():
 
 @app.get("/recent-conversations")
 async def get_recent_conversations(limit: int = 10):
-    """Get recent conversations with detailed turn information"""
+    """Get recent conversations with detailed turn information from MongoDB"""
     try:
-        conn = sqlite3.connect('conversations.db')
-        cursor = conn.cursor()
+        if not MONGODB_AVAILABLE:
+            return {"error": "MongoDB not available", "recent_conversations": []}
+            
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
+        db = client['interview_scheduler']
         
-        cursor.execute('''
-            SELECT * FROM conversation_sessions 
-            ORDER BY start_time DESC 
-            LIMIT ?
-        ''', (limit,))
-        sessions = cursor.fetchall()
+        # Get recent conversations from MongoDB
+        sessions = list(db.conversations.find().sort("start_time", -1).limit(limit))
+        client.close()
         
         result = []
         for session in sessions:
-            turns = json.loads(session[6]) if session[6] else []
+            # Convert ObjectId to string
+            if "_id" in session:
+                session["_id"] = str(session["_id"])
+                
+            turns = session.get("turns", [])
             
             # Calculate conversation metrics
             total_turns = len(turns)
             duration = None
-            if session[2] and session[3]:  # start_time and end_time
+            start_time = session.get("start_time")
+            end_time = session.get("end_time")
+            if start_time and end_time:
                 try:
-                    start = datetime.fromisoformat(session[2])
-                    end = datetime.fromisoformat(session[3])
+                    start = datetime.fromisoformat(start_time)
+                    end = datetime.fromisoformat(end_time)
                     duration = str(end - start)
                 except:
                     pass
@@ -2534,12 +2540,12 @@ async def get_recent_conversations(limit: int = 10):
             last_turn = turns[-1] if turns else None
             
             session_summary = {
-                "call_sid": session[0],
-                "candidate_phone": session[1],
-                "start_time": session[2],
-                "end_time": session[3],
-                "status": session[4],
-                "confirmed_slot": session[5],
+                "call_sid": session.get("call_sid"),
+                "candidate_phone": session.get("candidate_phone"),
+                "start_time": start_time,
+                "end_time": end_time,
+                "status": session.get("status"),
+                "confirmed_slot": session.get("confirmed_slot"),
                 "total_turns": total_turns,
                 "duration": duration,
                 "last_candidate_input": last_turn.get("candidate_input") if last_turn else None,
@@ -2548,8 +2554,6 @@ async def get_recent_conversations(limit: int = 10):
                 "conversation_turns": turns
             }
             result.append(session_summary)
-        
-        conn.close()
         return {
             "recent_conversations": result,
             "total_found": len(result)
@@ -2561,28 +2565,35 @@ async def get_recent_conversations(limit: int = 10):
 
 @app.get("/conversations")
 async def get_conversations():
-    """Get all conversation sessions"""
+    """Get all conversation sessions from MongoDB"""
     try:
-        conn = sqlite3.connect('conversations.db')
-        cursor = conn.cursor()
+        if not MONGODB_AVAILABLE:
+            return {"error": "MongoDB not available", "conversations": []}
+            
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
+        db = client['interview_scheduler']
         
-        cursor.execute('SELECT * FROM conversation_sessions ORDER BY start_time DESC')
-        sessions = cursor.fetchall()
+        # Get conversations from MongoDB
+        conversations = list(db.conversations.find().sort("start_time", -1))
         
         result = []
-        for session in sessions:
+        for session in conversations:
+            # Convert ObjectId to string for JSON serialization
+            if "_id" in session:
+                session["_id"] = str(session["_id"])
+                
             session_dict = {
-                "call_sid": session[0],
-                "candidate_phone": session[1],
-                "start_time": session[2],
-                "end_time": session[3],
-                "status": session[4],
-                "confirmed_slot": session[5],
-                "turns": json.loads(session[6]) if session[6] else []
+                "call_sid": session.get("call_sid"),
+                "candidate_phone": session.get("candidate_phone"),
+                "start_time": session.get("start_time"),
+                "end_time": session.get("end_time"),
+                "status": session.get("status"),
+                "confirmed_slot": session.get("confirmed_slot"),
+                "turns": session.get("turns", [])
             }
             result.append(session_dict)
         
-        conn.close()
+        client.close()
         return {"conversations": result}
     except Exception as e:
         logger.error(f"Error fetching conversations: {e}")
@@ -2592,26 +2603,32 @@ async def get_conversations():
 async def get_conversation(call_sid: str):
     """Get specific conversation details"""
     try:
-        conn = sqlite3.connect('conversations.db')
-        cursor = conn.cursor()
+        if not MONGODB_AVAILABLE:
+            return {"error": "MongoDB not available"}
+            
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
+        db = client['interview_scheduler']
         
-        cursor.execute('SELECT * FROM conversation_sessions WHERE call_sid = ?', (call_sid,))
-        session = cursor.fetchone()
+        session = db.conversations.find_one({"call_sid": call_sid})
+        client.close()
         
         if not session:
             return {"error": "Conversation not found"}
         
+        # Convert ObjectId to string
+        if "_id" in session:
+            session["_id"] = str(session["_id"])
+        
         result = {
-            "call_sid": session[0],
-            "candidate_phone": session[1],
-            "start_time": session[2],
-            "end_time": session[3],
-            "status": session[4],
-            "confirmed_slot": session[5],
-            "turns": json.loads(session[6]) if session[6] else []
+            "call_sid": session.get("call_sid"),
+            "candidate_phone": session.get("candidate_phone"),
+            "start_time": session.get("start_time"),
+            "end_time": session.get("end_time"),
+            "status": session.get("status"),
+            "confirmed_slot": session.get("confirmed_slot"),
+            "turns": session.get("turns", [])
         }
         
-        conn.close()
         return result
     except Exception as e:
         logger.error(f"Error fetching conversation {call_sid}: {e}")
@@ -2619,33 +2636,42 @@ async def get_conversation(call_sid: str):
 
 @app.get("/analytics")
 async def get_analytics():
-    """Get conversation analytics"""
+    """Get conversation analytics from MongoDB"""
     try:
-        conn = sqlite3.connect('conversations.db')
-        cursor = conn.cursor()
+        if not MONGODB_AVAILABLE:
+            return {"error": "MongoDB not available"}
+            
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
+        db = client['interview_scheduler']
         
-        # Basic stats
-        cursor.execute('SELECT COUNT(*) FROM conversation_sessions')
-        total_calls = cursor.fetchone()[0]
+        # Basic stats using MongoDB aggregation
+        pipeline_total = [{"$count": "total"}]
+        total_result = list(db.conversations.aggregate(pipeline_total))
+        total_calls = total_result[0]["total"] if total_result else 0
         
-        cursor.execute('SELECT COUNT(*) FROM conversation_sessions WHERE status = "completed"')
-        successful_calls = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT COUNT(*) FROM conversation_sessions WHERE status = "failed"')
-        failed_calls = cursor.fetchone()[0]
-        
-        cursor.execute('SELECT COUNT(*) FROM conversation_sessions WHERE status = "active"')
-        active_calls = cursor.fetchone()[0]
+        successful_calls = db.conversations.count_documents({"status": "completed"})
+        failed_calls = db.conversations.count_documents({"status": "failed"})
+        active_calls = db.conversations.count_documents({"status": "active"})
         
         # Average turns per call
-        cursor.execute('SELECT AVG(json_array_length(turns_json)) FROM conversation_sessions WHERE turns_json IS NOT NULL')
-        avg_turns = cursor.fetchone()[0] or 0
+        pipeline_avg = [
+            {"$match": {"turns": {"$exists": True}}},
+            {"$project": {"turn_count": {"$size": "$turns"}}},
+            {"$group": {"_id": None, "avg_turns": {"$avg": "$turn_count"}}}
+        ]
+        avg_result = list(db.conversations.aggregate(pipeline_avg))
+        avg_turns = avg_result[0]["avg_turns"] if avg_result else 0
         
         # Most confirmed slots
-        cursor.execute('SELECT confirmed_slot, COUNT(*) as count FROM conversation_sessions WHERE confirmed_slot IS NOT NULL GROUP BY confirmed_slot ORDER BY count DESC')
-        slot_preferences = cursor.fetchall()
+        pipeline_slots = [
+            {"$match": {"confirmed_slot": {"$ne": None}}},
+            {"$group": {"_id": "$confirmed_slot", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}}
+        ]
+        slot_results = list(db.conversations.aggregate(pipeline_slots))
+        slot_preferences = [{"slot": slot["_id"], "count": slot["count"]} for slot in slot_results]
         
-        conn.close()
+        client.close()
         
         return {
             "total_calls": total_calls,
@@ -2654,7 +2680,7 @@ async def get_analytics():
             "active_calls": active_calls,
             "success_rate": round((successful_calls / total_calls * 100) if total_calls > 0 else 0, 2),
             "average_turns_per_call": round(avg_turns, 2),
-            "slot_preferences": [{"slot": slot[0], "count": slot[1]} for slot in slot_preferences]
+            "slot_preferences": slot_preferences
         }
     except Exception as e:
         logger.error(f"Error generating analytics: {e}")
@@ -2695,30 +2721,33 @@ async def get_live_conversation_status(call_sid: str):
                 "candidate_info": session.candidate
             }
         
-        # If not in memory, check database
-        conn = sqlite3.connect('conversations.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM conversation_sessions WHERE call_sid = ?', (call_sid,))
-        session_data = cursor.fetchone()
-        conn.close()
+        # If not in memory, check MongoDB database
+        if MONGODB_AVAILABLE:
+            try:
+                client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
+                db = client['interview_scheduler']
+                session_data = db.conversations.find_one({"call_sid": call_sid})
+                client.close()
+                
+                if session_data:
+                    turns = session_data.get("turns", [])
+                    
+                    return {
+                        "call_sid": call_sid,
+                        "conversation_status": session_data.get("status"),
+                        "current_turn": len(turns),
+                        "candidate_phone": session_data.get("candidate_phone"),
+                        "start_time": session_data.get("start_time"),
+                        "end_time": session_data.get("end_time"),
+                        "confirmed_slot": session_data.get("confirmed_slot"),
+                        "twilio_status": None,  # Not available for completed calls
+                        "recent_turns": turns[-3:] if turns else [],  # Last 3 turns
+                        "candidate_info": None
+                    }
+            except Exception as db_error:
+                logger.error(f"MongoDB error in live conversation: {db_error}")
         
-        if not session_data:
-            return {"error": "Conversation not found", "call_sid": call_sid}
-        
-        turns = json.loads(session_data[6]) if session_data[6] else []
-        
-        return {
-            "call_sid": call_sid,
-            "conversation_status": session_data[4],  # status
-            "current_turn": len(turns),
-            "candidate_phone": session_data[1],
-            "start_time": session_data[2],
-            "end_time": session_data[3],
-            "confirmed_slot": session_data[5],
-            "twilio_status": None,  # Not available for completed calls
-            "recent_turns": turns[-3:] if turns else [],  # Last 3 turns
-            "candidate_info": None
-        }
+        return {"error": "Conversation not found", "call_sid": call_sid}
         
     except Exception as e:
         logger.error(f"Error getting live conversation status for {call_sid}: {e}")
@@ -2753,23 +2782,24 @@ async def get_call_status(call_sid: str):
 
 @app.delete("/conversations/{call_sid}")
 async def delete_conversation(call_sid: str):
-    """Delete a conversation session"""
+    """Delete a conversation session from MongoDB"""
     try:
-        conn = sqlite3.connect('conversations.db')
-        cursor = conn.cursor()
+        if not MONGODB_AVAILABLE:
+            return {"error": "MongoDB not available"}
+            
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
+        db = client['interview_scheduler']
         
-        cursor.execute('DELETE FROM conversation_sessions WHERE call_sid = ?', (call_sid,))
-        cursor.execute('DELETE FROM conversation_turns WHERE call_sid = ?', (call_sid,))
+        # Delete from MongoDB
+        result = db.conversations.delete_one({"call_sid": call_sid})
+        client.close()
         
-        if cursor.rowcount > 0:
-            conn.commit()
-            conn.close()
+        if result.deleted_count > 0:
             # Also remove from memory
             if call_sid in conversation_sessions:
                 del conversation_sessions[call_sid]
             return {"message": "Conversation deleted successfully"}
         else:
-            conn.close()
             return {"error": "Conversation not found"}
     except Exception as e:
         logger.error(f"Error deleting conversation {call_sid}: {e}")
