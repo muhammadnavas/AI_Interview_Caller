@@ -812,9 +812,14 @@ def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
             return None
 
         # Map the shortlistedcandidates collection fields to our expected format
+        phone = doc.get("phoneNumber", "")
+        # Ensure phone number has country code prefix
+        if phone and not phone.startswith("+"):
+            phone = f"+91{phone}"  # Add India country code
+            
         return {
             "name": doc.get("candidateName", "Unknown"),
-            "phone": doc.get("phoneNumber", ""),
+            "phone": phone,
             "email": doc.get("candidateEmail", ""),
             "position": doc.get("role", ""),
             "company": doc.get("companyName", ""),
@@ -974,6 +979,113 @@ def update_candidate_interview_scheduled(candidate_id: str, interview_details: d
 
     except Exception as e:
         logger.error(f"Error updating interview details for candidate {candidate_id}: {e}")
+        return False
+
+def get_candidate_scheduling_status(candidate_id: str) -> dict:
+    """Get comprehensive scheduling status for a candidate from MongoDB"""
+    try:
+        try:
+            from pymongo import MongoClient
+            from bson import ObjectId
+        except ImportError:
+            return {"scheduling_status": "unknown", "reason": "MongoDB not available"}
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return {"scheduling_status": "unknown", "reason": "MongoDB not configured"}
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Find candidate by ObjectId
+        try:
+            doc = coll.find_one({"_id": ObjectId(candidate_id)})
+        except Exception as e:
+            return {"scheduling_status": "error", "reason": f"Invalid candidate ID: {e}"}
+
+        if not doc:
+            return {"scheduling_status": "not_found", "reason": "Candidate not found"}
+
+        # Extract scheduling information
+        interview_status = doc.get("interviewStatus", "not_scheduled")
+        scheduled_date = doc.get("scheduledInterviewDate", None)
+        
+        # Check if there's call tracking data with interview details
+        call_tracking = doc.get("call_tracking", {})
+        interview_details = call_tracking.get("interview_details", {})
+        email_status = interview_details.get("email_status", {})
+        
+        scheduling_status = {
+            "interview_status": interview_status,
+            "scheduled_date": scheduled_date,
+            "interview_slot_confirmed": interview_details.get("confirmed_slot", None),
+            "interview_details": {
+                "slot": interview_details.get("confirmed_slot", None),
+                "scheduled_at": interview_details.get("scheduled_at", None),
+                "confirmation_method": interview_details.get("confirmation_method", None)
+            },
+            "email_notifications": {
+                "confirmation_sent": email_status.get("sent", False),
+                "email_status": email_status.get("status", "not_sent"),
+                "sent_at": email_status.get("sent_at", None),
+                "recipient_email": email_status.get("recipient", None),
+                "delivery_status": email_status.get("delivery_status", "unknown")
+            },
+            "conversation_status": call_tracking.get("conversation_status", "not_started"),
+            "last_interaction": call_tracking.get("last_contact_date", None)
+        }
+
+        client.close()
+        return scheduling_status
+
+    except Exception as e:
+        logger.error(f"Error getting scheduling status for candidate {candidate_id}: {e}")
+        return {"scheduling_status": "error", "reason": str(e)}
+
+def update_candidate_email_status(candidate_id: str, email_status: dict) -> bool:
+    """Update candidate document with email notification status"""
+    try:
+        try:
+            from pymongo import MongoClient
+            from bson import ObjectId
+        except ImportError:
+            logger.warning("pymongo not installed; cannot update email status")
+            return False
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return False
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Update candidate with email status
+        try:
+            result = coll.update_one(
+                {"_id": ObjectId(candidate_id)},
+                {
+                    "$set": {
+                        "call_tracking.interview_details.email_status": email_status,
+                        "call_tracking.updated_at": datetime.now().isoformat()
+                    }
+                }
+            )
+            client.close()
+            return result.modified_count > 0
+            
+        except Exception as e:
+            logger.error(f"Error updating email status: {e}")
+            client.close()
+            return False
+
+    except Exception as e:
+        logger.error(f"Error updating candidate email status: {e}")
         return False
 
 def get_candidate_call_status(candidate_id: str) -> dict:
@@ -1207,11 +1319,56 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         server.quit()
         
         logger.info(f"✅ Interview confirmation email sent successfully to {candidate_email} for slot: {confirmed_slot}")
-        return True
+        
+        # Update candidate document with email status
+        email_status = {
+            "sent": True,
+            "status": "delivered",
+            "sent_at": datetime.now().isoformat(),
+            "recipient": candidate_email,
+            "subject": subject,
+            "confirmed_slot": confirmed_slot,
+            "delivery_status": "sent_successfully",
+            "call_sid": call_sid
+        }
+        
+        # Update candidate in MongoDB with email status
+        update_candidate_email_status(candidate.get('raw', {}).get('_id'), email_status)
+        
+        return {
+            "email_sent": True,
+            "status": "success",
+            "recipient": candidate_email,
+            "sent_at": datetime.now().isoformat(),
+            "subject": subject,
+            "confirmed_slot": confirmed_slot
+        }
         
     except Exception as e:
         logger.error(f"Failed to send confirmation email: {e}")
-        return False
+        
+        # Update candidate document with failure status
+        email_status = {
+            "sent": False,
+            "status": "failed",
+            "attempted_at": datetime.now().isoformat(),
+            "recipient": candidate_email,
+            "error": str(e),
+            "delivery_status": "failed",
+            "call_sid": call_sid
+        }
+        
+        # Update candidate in MongoDB with email failure status
+        if candidate.get('raw', {}).get('_id'):
+            update_candidate_email_status(candidate.get('raw', {}).get('_id'), email_status)
+        
+        return {
+            "email_sent": False,
+            "status": "failed",
+            "error": str(e),
+            "attempted_at": datetime.now().isoformat(),
+            "recipient": candidate_email
+        }
 
 def generate_ai_response(session: ConversationSession, user_input: str, intent: str, confidence: float) -> str:
     """Generate appropriate AI response based on conversation context and intent"""
@@ -1463,15 +1620,24 @@ async def process_speech(request: Request):
                         logger.error(f"Failed to send confirmation email: {email_error}")
                         email_sent = False
                     
-                    # Save interview schedule to MongoDB
+                    # Save interview schedule to MongoDB with comprehensive status
                     try:
                         interview_details = {
-                            "scheduled_slot": confirmed_slot,
+                            "confirmed_slot": confirmed_slot,
                             "call_sid": call_sid,
-                            "email_sent": email_sent,
-                            "scheduled_at": datetime.now().isoformat()
+                            "email_status": email_sent if isinstance(email_sent, dict) else {
+                                "sent": bool(email_sent),
+                                "status": "sent" if email_sent else "failed",
+                                "sent_at": datetime.now().isoformat() if email_sent else None
+                            },
+                            "scheduled_at": datetime.now().isoformat(),
+                            "confirmation_method": "phone_call",
+                            "interview_status": "scheduled",
+                            "scheduling_completed": True,
+                            "candidate_confirmed": True
                         }
                         update_candidate_interview_scheduled(candidate_id, interview_details)
+                        logger.info(f"📝 Updated MongoDB with comprehensive interview details for candidate {candidate_id}")
                     except Exception as mongo_error:
                         logger.error(f"Failed to update MongoDB: {mongo_error}")
                     
@@ -1856,14 +2022,30 @@ async def make_actual_call(request: Request):
                         f"Call established successfully with status: {updated_call.status}", 
                         call_sid=call.sid, candidate_id=candidate_id)
 
+        # Get current scheduling status from the candidate document
+        scheduling_status = get_candidate_scheduling_status(candidate_id)
+        
         return {
             "status": "success",
             "message": f"Call initiated to {candidate_info.get('phone')}",
             "call_sid": call.sid,
             "call_status": updated_call.status,
             "webhook_url": webhook_url,
-            "candidate": candidate_info.get("name"),
-            "initial_status": call.status
+            "candidate": {
+                "id": candidate_id,
+                "name": candidate_info.get("name"),
+                "phone": candidate_info.get("phone"),
+                "email": candidate_info.get("email"),
+                "position": candidate_info.get("position"),
+                "company": candidate_info.get("company")
+            },
+            "initial_status": call.status,
+            "scheduling_status": scheduling_status,
+            "call_tracking": {
+                "total_attempts": call_status["attempts"] + 1,
+                "max_attempts": 3,
+                "can_call_again": call_status["attempts"] + 1 < 3
+            }
         }
         
     except Exception as e:
@@ -2145,19 +2327,25 @@ async def test_call_with_first_candidate():
         
         # Find a candidate that hasn't reached call limits
         for candidate in candidates:
-            candidate_id = candidate.get("id")
+            candidate_id = candidate.get("candidate_id")  # Fixed: use candidate_id instead of id
             if candidate_id:
                 call_status = get_candidate_call_status(candidate_id)
                 if call_status["can_call"]:
                     logger.info(f"🧪 Testing call to candidate: {candidate.get('name')} (ID: {candidate_id})")
                     
-                    # Create a request with the candidate ID
-                    from unittest.mock import Mock
-                    mock_request = Mock()
-                    mock_request.json = lambda: {"candidate_id": candidate_id}
+                    # Make internal HTTP request to make-actual-call endpoint
+                    import httpx
                     
-                    # Call the actual make_actual_call function
-                    result = await make_actual_call(mock_request)
+                    async with httpx.AsyncClient() as client:
+                        try:
+                            response = await client.post(
+                                "http://localhost:8000/make-actual-call",
+                                json={"candidate_id": candidate_id},
+                                headers={"Content-Type": "application/json"}
+                            )
+                            result = response.json()
+                        except Exception as e:
+                            result = {"status": "error", "message": f"Internal request failed: {str(e)}"}
                     
                     return {
                         "status": "success",
@@ -2783,6 +2971,105 @@ async def get_call_status(call_sid: str):
     except Exception as e:
         logger.error(f"Error fetching call status for {call_sid}: {e}")
         return {"error": str(e)}
+
+@app.get("/candidate-status/{candidate_id}")
+async def get_comprehensive_candidate_status(candidate_id: str):
+    """Get comprehensive status including call, interview, and email information"""
+    try:
+        # Get candidate basic info
+        candidate_info = fetch_candidate_by_id(candidate_id)
+        if not candidate_info:
+            return {
+                "status": "error",
+                "message": f"Candidate not found with ID: {candidate_id}"
+            }
+
+        # Get scheduling status
+        scheduling_status = get_candidate_scheduling_status(candidate_id)
+        
+        # Get call status
+        call_status = get_candidate_call_status(candidate_id)
+        
+        # Combine all information
+        comprehensive_status = {
+            "candidate_id": candidate_id,
+            "candidate_info": {
+                "name": candidate_info.get("name"),
+                "phone": candidate_info.get("phone"),
+                "email": candidate_info.get("email"),
+                "position": candidate_info.get("position"),
+                "company": candidate_info.get("company")
+            },
+            "call_tracking": {
+                "can_call": call_status.get("can_call", False),
+                "total_attempts": call_status.get("attempts", 0),
+                "max_attempts": 3,
+                "remaining_attempts": max(0, 3 - call_status.get("attempts", 0)),
+                "status": call_status.get("status", "unknown"),
+                "reason": call_status.get("reason", "")
+            },
+            "scheduling_status": scheduling_status,
+            "overall_status": determine_overall_status(scheduling_status, call_status),
+            "last_updated": datetime.now().isoformat()
+        }
+        
+        return comprehensive_status
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"Failed to get candidate status: {str(e)}"
+        }
+
+def determine_overall_status(scheduling_status: dict, call_status: dict) -> dict:
+    """Determine overall candidate status based on scheduling and call data"""
+    interview_status = scheduling_status.get("interview_status", "not_scheduled")
+    email_status = scheduling_status.get("email_notifications", {})
+    
+    if interview_status == "scheduled" and email_status.get("confirmation_sent"):
+        overall = "interview_scheduled_confirmed"
+        message = "Interview scheduled and confirmation email sent"
+    elif interview_status == "scheduled":
+        overall = "interview_scheduled_pending"
+        message = "Interview scheduled but email confirmation pending"
+    elif call_status.get("attempts", 0) >= 3:
+        overall = "max_attempts_reached"
+        message = "Maximum call attempts reached, manual follow-up needed"
+    elif call_status.get("attempts", 0) > 0:
+        overall = "in_progress"
+        message = f"Contact attempts made ({call_status.get('attempts', 0)}/3)"
+    else:
+        overall = "not_contacted"
+        message = "No contact attempts made yet"
+    
+    return {
+        "status": overall,
+        "message": message,
+        "priority": get_priority_level(overall),
+        "next_action": get_next_action(overall)
+    }
+
+def get_priority_level(status: str) -> str:
+    """Get priority level based on status"""
+    if status == "max_attempts_reached":
+        return "high"
+    elif status in ["interview_scheduled_pending", "in_progress"]:
+        return "medium"
+    elif status == "interview_scheduled_confirmed":
+        return "low"
+    else:
+        return "normal"
+
+def get_next_action(status: str) -> str:
+    """Get recommended next action based on status"""
+    actions = {
+        "not_contacted": "Make initial call",
+        "in_progress": "Continue follow-up calls",
+        "max_attempts_reached": "Manual review and alternative contact",
+        "interview_scheduled_pending": "Verify email delivery or resend",
+        "interview_scheduled_confirmed": "No action needed - await interview"
+    }
+    return actions.get(status, "Review status")
 
 @app.delete("/conversations/{call_sid}")
 async def delete_conversation(call_sid: str):
