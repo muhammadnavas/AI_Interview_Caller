@@ -45325,3 +45325,105 @@
 2025-11-05 23:02:13,738 - INFO - 1 change detected
 2025-11-05 23:02:14,144 - INFO - 2 changes detected
 2025-11-05 23:02:54,583 - INFO - Loaded candidate from MongoDB: None
+2025-11-05 23:03:44,955 - INFO - Loaded candidate from MongoDB: None
+2025-11-05 23:04:59,556 - INFO - Loaded candidate from MongoDB: None
+2025-11-05 23:06:23,813 - INFO - 3 changes detected
+2025-11-05 23:06:25,172 - INFO - Loaded candidate from MongoDB: None
+2025-11-05 23:06:26,924 - INFO - 1 change detected
+2025-11-05 23:06:27,283 - INFO - 1 change detected
+2025-11-05 23:06:27,642 - INFO - 1 change detected
+2025-11-05 23:06:28,051 - INFO - 1 change detected
+2025-11-05 23:06:28,454 - INFO - 1 change detected
+2025-11-05 23:06:28,856 - INFO - 1 change detected
+2025-11-05 23:06:29,260 - INFO - 1 change detected
+2025-11-05 23:06:29,668 - INFO - 1 change detected
+2025-11-05 23:06:30,075 - INFO - 1 change detected
+2025-11-05 23:06:30,478 - INFO - 1 change detected
+2025-11-05 23:06:30,884 - INFO - 1 change detected
+2025-11-05 23:06:30,953 - INFO - Loaded candidate from MongoDB: None
+2025-11-05 23:06:31,237 - INFO - 1 change detected
+2025-11-05 23:06:31,597 - INFO - 1 change detected
+2025-11-05 23:06:31,954 - INFO - 1 change detected
+2025-11-05 23:06:32,292 - INFO - Loaded candidate from MongoDB: None
+2025-11-05 23:06:32,309 - INFO - 1 change detected
+2025-11-05 23:06:32,669 - INFO - 1 change detected
+2025-11-05 23:06:33,074 - INFO - 1 change detected
+2025-11-05 23:06:33,423 - INFO - MongoDB collections and indexes initialized successfully
+2025-11-05 23:06:33,424 - INFO - Database initialized successfully
+2025-11-05 23:06:33,425 - INFO - All configuration validated successfully
+2025-11-05 23:06:33,425 - INFO - AI Interview Caller service started successfully
+2025-11-05 23:06:33,426 - INFO - Webhook URL: https://ai-interview-caller-wz24.onrender.com
+2025-11-05 23:06:33,426 - INFO - Candidate: None (None)
+2025-11-05 23:06:33,478 - INFO - 1 change detected
+2025-11-05 23:06:33,895 - INFO - 1 change detected
+2025-11-05 23:06:34,312 - INFO - 1 change detected
+2025-11-05 23:06:34,679 - INFO - 1 change detected
+2025-11-05 23:06:35,088 - INFO - 1 change detected
+2025-11-05 23:06:35,493 - INFO - 1 change detected
+2025-11-05 23:06:35,900 - INFO - 1 change detected
+2025-11-05 23:06:36,305 - INFO - 1 change detected
+2025-11-05 23:06:36,710 - INFO - 1 change detected
+2025-11-05 23:06:37,118 - INFO - 1 change detected
+2025-11-05 23:06:37,522 - INFO - 1 change detected
+2025-11-05 23:06:37,928 - INFO - 1 change detected
+2025-11-05 23:06:38,334 - INFO - 1 change detected
+2025-11-05 23:06:38,739 - INFO - 1 change detected
+2025-11-05 23:06:39,146 - INFO - 1 change detected
+2025-11-05 23:06:39,554 - INFO - 1 change detected
+2025-11-05 23:06:39,957 - INFO - 1 change detected
+2025-11-05 23:06:40,359 - INFO - 1 change detected
+2025-11-05 23:06:40,762 - INFO - 1 change detected
+2025-11-05 23:06:41,165 - INFO - 1 change detected
+2025-11-05 23:06:41,570 - INFO - 1 change detected
+2025-11-05 23:06:41,977 - INFO - 1 change detected
+2025-11-05 23:06:42,395 - INFO - 1 change detected
+2025-11-05 23:06:42,800 - INFO - 1 change detected
+2025-11-05 23:06:43,206 - INFO - 1 change detected
+2025-11-05 23:06:43,613 - INFO - 1 change detected
+2025-11-05 23:06:44,021 - INFO - 1 change detected
+2025-11-05 23:06:44,426 - INFO - 1 change detected
+2025-11-05 23:06:44,830 - INFO - 1 change detected
+2025-11-05 23:06:45,236 - INFO - 1 change detected
+2025-11-05 23:06:45,640 - INFO - 1 change detected
+2025-11-05 23:06:46,046 - INFO - 1 change detected
+2025-11-05 23:06:46,451 - INFO - 1 change detected
+2025-11-05 23:06:46,858 - INFO - 1 change detected
+2025-11-05 23:06:47,264 - INFO - 1 change detected
+2025-11-05 23:06:47,680 - INFO - 2 changes detected
+2025-11-05 23:06:48,035 - INFO - 1 change detected
+2025-11-05 23:06:48,397 - INFO - 1 change detected
+2025-11-05 23:06:48,752 - INFO - 1 change detected
+2025-11-05 23:06:49,109 - INFO - 1 change detected
+2025-11-05 23:06:49,464 - INFO - 1 change detected
+2025-11-05 23:06:49,875 - INFO - 1 change detected
+2025-11-05 23:06:50,333 - INFO - 1 change detected
+2025-11-05 23:06:50,697 - INFO - 1 change detected
+2025-11-05 23:06:51,104 - INFO - 1 change detected
+2025-11-05 23:06:51,509 - INFO - 1 change detected
+2025-11-05 23:06:51,916 - INFO - 1 change detected
+2025-11-05 23:06:52,322 - INFO - 1 change detected
+2025-11-05 23:06:52,725 - INFO - 1 change detected
+2025-11-05 23:06:53,131 - INFO - 1 change detected
+2025-11-05 23:06:53,498 - INFO - 1 change detected
+2025-11-05 23:06:53,905 - INFO - 1 change detected
+2025-11-05 23:06:54,310 - INFO - 1 change detected
+2025-11-05 23:06:54,716 - INFO - 1 change detected
+2025-11-05 23:06:55,123 - INFO - 1 change detected
+2025-11-05 23:06:55,529 - INFO - 1 change detected
+2025-11-05 23:06:55,933 - INFO - 1 change detected
+2025-11-05 23:06:56,338 - INFO - 1 change detected
+2025-11-05 23:06:56,796 - INFO - 1 change detected
+2025-11-05 23:06:57,164 - INFO - 1 change detected
+2025-11-05 23:06:57,625 - INFO - 1 change detected
+2025-11-05 23:06:57,993 - INFO - 1 change detected
+2025-11-05 23:06:58,399 - INFO - 1 change detected
+2025-11-05 23:06:58,805 - INFO - 1 change detected
+2025-11-05 23:06:59,264 - INFO - 1 change detected
+2025-11-05 23:06:59,817 - INFO - 1 change detected
+2025-11-05 23:07:00,229 - INFO - 1 change detected
+2025-11-05 23:07:00,634 - INFO - 1 change detected
+2025-11-05 23:07:01,041 - INFO - 1 change detected
+2025-11-05 23:07:01,444 - INFO - 1 change detected
+2025-11-05 23:07:01,851 - INFO - 1 change detected
+2025-11-05 23:07:02,256 - INFO - 1 change detected
+2025-11-05 23:07:02,713 - INFO - 4 changes detected
