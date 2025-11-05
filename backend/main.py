@@ -190,8 +190,8 @@ def get_all_candidates_from_mongo() -> list:
             return []
 
         client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        db_name = config("MONGODB_DB", default="ai_interview_schedule")
-        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
 
         db = client[db_name]
         coll = db[coll_name]
@@ -200,16 +200,23 @@ def get_all_candidates_from_mongo() -> list:
         candidates = []
         
         for doc in docs:
+            # Map shortlistedcandidates collection fields to our expected format
+            phone = doc.get("phoneNumber", "")
+            # Ensure phone number has country code prefix
+            if phone and not phone.startswith("+"):
+                phone = f"+91{phone}"  # Assuming Indian numbers based on screenshot
+                
             candidate = {
-                "candidate_id": doc.get("candidate_id", str(doc.get("_id"))),  # Use candidate_id field, fallback to _id
-                "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
-                "phone": doc.get("phone") or doc.get("phone_number"),
-                "email": doc.get("email"),
-                "position": doc.get("position") or doc.get("role"),
-                "company": doc.get("company") or doc.get("employer"),
+                "candidate_id": str(doc.get("_id")),  # Use MongoDB ObjectId as candidate_id
+                "name": doc.get("candidateName", "Unknown"),
+                "phone": phone,
+                "email": doc.get("candidateEmail", ""),
+                "position": doc.get("role", ""),
+                "company": doc.get("companyName", ""),
+                "call_tracking": doc.get("call_tracking", {})
             }
             # Only add candidates with valid phone numbers
-            if candidate["phone"] and candidate["phone"].startswith("+"):
+            if candidate["phone"] and len(candidate["phone"]) > 5:
                 candidates.append(candidate)
         
         return candidates
@@ -769,13 +776,14 @@ def analyze_intent(text: str) -> tuple[str, float]:
 
 
 def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
-    """Fetch candidate document from MongoDB by candidate_id field (not ObjectId).
+    """Fetch candidate document from MongoDB shortlistedcandidates collection by ObjectId.
 
     Returns normalized dict or None.
     """
     try:
         try:
             from pymongo import MongoClient
+            from bson import ObjectId
         except ImportError:
             logger.warning("pymongo not installed; cannot fetch candidate by id")
             return None
@@ -786,33 +794,30 @@ def fetch_candidate_by_id(candidate_id: str) -> Optional[dict]:
             return None
 
         client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        db_name = config("MONGODB_DB", default="ai_interview_schedule")
-        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
         db = client[db_name]
         coll = db[coll_name]
 
-        # First try the new candidate_id field
-        doc = coll.find_one({"candidate_id": candidate_id})
-        
-        # If not found, try ObjectId for backward compatibility
-        if not doc:
-            try:
-                from bson import ObjectId
-                query = {"_id": ObjectId(candidate_id)}
-                doc = coll.find_one(query)
-            except Exception:
-                # fallback to searching by id, email, or phone for old data
-                doc = coll.find_one({"id": candidate_id}) or coll.find_one({"email": candidate_id}) or coll.find_one({"phone": candidate_id}) or coll.find_one({"phone_number": candidate_id})
-
-        if not doc:
+        # Try to find by ObjectId (primary method for shortlistedcandidates collection)
+        try:
+            query = {"_id": ObjectId(candidate_id)}
+            doc = coll.find_one(query)
+        except Exception as e:
+            logger.warning(f"Invalid ObjectId format: {candidate_id}, error: {e}")
             return None
 
+        if not doc:
+            logger.warning(f"No candidate found with ID: {candidate_id}")
+            return None
+
+        # Map the shortlistedcandidates collection fields to our expected format
         return {
-            "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
-            "phone": doc.get("phone") or doc.get("phone_number"),
-            "email": doc.get("email"),
-            "position": doc.get("position") or doc.get("role"),
-            "company": doc.get("company") or doc.get("employer"),
+            "name": doc.get("candidateName", "Unknown"),
+            "phone": doc.get("phoneNumber", ""),
+            "email": doc.get("candidateEmail", ""),
+            "position": doc.get("role", ""),
+            "company": doc.get("companyName", ""),
             "raw": doc,
         }
     except Exception as e:
@@ -834,23 +839,19 @@ def update_candidate_call_tracking(candidate_id: str, call_data: dict) -> bool:
             return False
 
         client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        db_name = config("MONGODB_DB", default="ai_interview_schedule")
-        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
         db = client[db_name]
         coll = db[coll_name]
 
-        # Try to find candidate by various ID formats
+        # Try to find candidate by ObjectId (primary method for shortlistedcandidates)
         try:
             from bson import ObjectId
             query = {"_id": ObjectId(candidate_id)}
             doc = coll.find_one(query)
-        except Exception:
-            doc = coll.find_one({"$or": [
-                {"id": candidate_id},
-                {"email": candidate_id},
-                {"phone": candidate_id},
-                {"phone_number": candidate_id}
-            ]})
+        except Exception as e:
+            logger.warning(f"Invalid candidate_id format: {candidate_id}, error: {e}")
+            return False
 
         if not doc:
             logger.warning(f"Candidate not found for ID: {candidate_id}")
@@ -988,21 +989,18 @@ def get_candidate_call_status(candidate_id: str) -> dict:
             return {"can_call": True, "reason": "MongoDB not configured", "attempts": 0}
 
         client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        db_name = config("MONGODB_DB", default="ai_interview_schedule")
-        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
         db = client[db_name]
         coll = db[coll_name]
 
-        # Find candidate
+        # Find candidate by ObjectId
         try:
             from bson import ObjectId
             doc = coll.find_one({"_id": ObjectId(candidate_id)})
-        except Exception:
-            doc = coll.find_one({"$or": [
-                {"id": candidate_id},
-                {"email": candidate_id},
-                {"phone": candidate_id}
-            ]})
+        except Exception as e:
+            logger.warning(f"Invalid candidate_id format: {candidate_id}, error: {e}")
+            return {"can_call": False, "reason": "Invalid candidate ID format", "attempts": 0}
 
         if not doc:
             return {"can_call": True, "reason": "New candidate", "attempts": 0}
@@ -1910,8 +1908,8 @@ async def get_candidates():
             return {"candidates": [], "total": 0, "status": "error", "message": "MongoDB not configured"}
 
         client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        db_name = config("MONGODB_DB", default="ai_interview_schedule")
-        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
         db = client[db_name]
         coll = db[coll_name]
 
@@ -1927,14 +1925,20 @@ async def get_candidates():
         for doc in candidates_cursor:
             total_candidates += 1
             
+            # Map shortlistedcandidates fields to our expected format
+            phone = doc.get("phoneNumber", "")
+            # Ensure phone number has country code prefix
+            if phone and not phone.startswith("+"):
+                phone = f"+91{phone}"  # Assuming Indian numbers
+            
             # Extract basic info
             candidate = {
-                "id": str(doc.get("_id", doc.get("id", "unknown"))),
-                "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
-                "phone": doc.get("phone") or doc.get("phone_number"),
-                "email": doc.get("email"),
-                "position": doc.get("position") or doc.get("role"),
-                "company": doc.get("company") or doc.get("employer")
+                "id": str(doc.get("_id")),
+                "name": doc.get("candidateName", "Unknown"),
+                "phone": phone,
+                "email": doc.get("candidateEmail", ""),
+                "position": doc.get("role", ""),
+                "company": doc.get("companyName", "")
             }
             
             # Add call tracking data
