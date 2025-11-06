@@ -28,10 +28,9 @@ except ImportError:
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('conversation.log'),
         logging.StreamHandler()
     ]
 )
@@ -509,7 +508,7 @@ def save_conversation_session(session: ConversationSession):
             upsert=True
         )
         
-        logger.info(f"✅ Saved conversation session: {session.call_sid} with {total_turns} turns")
+        logger.info(f"Saved conversation session: {session.call_sid} with {total_turns} turns")
         
     except Exception as e:
         logger.error(f"Error saving conversation session to MongoDB: {e}")
@@ -968,11 +967,11 @@ def update_candidate_interview_scheduled(candidate_id: str, interview_details: d
         result = coll.update_one(query, update_data)
         
         if result.modified_count > 0:
-            logger.info(f"✅ Successfully updated interview details for candidate {candidate_id}: {interview_details.get('scheduled_slot')}")
+            logger.info(f"Updated interview details for candidate {candidate_id}: {interview_details.get('scheduled_slot')}")
             # Verify the update by fetching the document
             doc = coll.find_one(query)
             if doc:
-                logger.info(f"✅ Verification: Candidate status is now {doc.get('call_tracking', {}).get('status')}")
+                logger.info(f"Candidate status updated: {doc.get('call_tracking', {}).get('status')}")
             return True
         else:
             logger.error(f"❌ Failed to update candidate {candidate_id}. Query: {query}")
@@ -1191,12 +1190,12 @@ def get_ai_greeting(candidate: Optional[dict] = None) -> str:
 
 async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str, call_sid: str):
     """Send professional interview confirmation email"""
-    logger.info(f"📧 Attempting to send interview confirmation email for call {call_sid}")
-    logger.info(f"📧 Candidate: {candidate.get('name', 'Unknown')} ({candidate.get('email', 'No email')})")
-    logger.info(f"📧 Confirmed slot: {confirmed_slot}")
+    logger.info(f"Sending interview confirmation email for call {call_sid}")
+    logger.info(f"Candidate: {candidate.get('name', 'Unknown')} ({candidate.get('email', 'No email')})")
+    logger.info(f"Confirmed slot: {confirmed_slot}")
     
     if not all([SMTP_USERNAME, SMTP_PASSWORD, SENDER_EMAIL]):
-        logger.warning("❌ SMTP credentials not configured. Cannot send confirmation email.")
+        logger.warning("SMTP credentials not configured. Cannot send confirmation email.")
         return False
     
     try:
@@ -1334,7 +1333,7 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         server.send_message(msg)
         server.quit()
         
-        logger.info(f"✅ Interview confirmation email sent successfully to {candidate_email} for slot: {confirmed_slot}")
+        logger.info(f"Interview confirmation email sent to {candidate_email} for slot: {confirmed_slot}")
         
         # Update candidate document with email status
         email_status = {
@@ -1613,7 +1612,7 @@ async def process_speech(request: Request):
                 
         elif conversation_stage == "scheduling":
             # Main scheduling conversation
-            logger.info(f"🔄 Processing scheduling stage - Intent: {intent}, Confidence: {intent_confidence}")
+            logger.info(f"Processing scheduling stage - Intent: {intent}, Confidence: {intent_confidence}")
             if intent == "confirmation" and intent_confidence > 0.6:
                 # Look for specific time mentioned
                 mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
@@ -1853,7 +1852,7 @@ async def make_actual_call(request: Request):
     try:
         body = await request.json()
         candidate_id = body.get("candidate_id") if isinstance(body, dict) else None
-        logger.info(f"🔄 Processing call request for candidate_id: {candidate_id}")
+        logger.info(f"Processing call request for candidate_id: {candidate_id}")
     except Exception as e:
         logger.error(f"Failed to parse request body: {e}")
         return {
@@ -1898,13 +1897,13 @@ async def make_actual_call(request: Request):
             "message": f"Invalid phone number for candidate {candidate_id}: {candidate_info.get('phone')}. Please update the candidate's phone number."
         }
         
-    logger.info(f"📞 Found candidate: {candidate_info.get('name')} ({candidate_info.get('phone')})")
+    logger.info(f"Found candidate: {candidate_info.get('name')} ({candidate_info.get('phone')})")
     
     # Check call limits from MongoDB using the actual MongoDB document ID
     call_status = get_candidate_call_status(candidate_id)
     
     if not call_status["can_call"]:
-        logger.warning(f"❌ Call blocked for {candidate_info.get('name')}: {call_status['reason']}")
+        logger.warning(f"Call blocked for {candidate_info.get('name')}: {call_status['reason']}")
         return {
             "status": "error",
             "message": f"Cannot make call: {call_status['reason']}",
@@ -1914,7 +1913,7 @@ async def make_actual_call(request: Request):
             "details": call_status
         }
         
-    logger.info(f"✅ Call allowed for {candidate_info.get('name')} - Attempt {call_status['attempts'] + 1}/3")
+    logger.info(f"Call allowed for {candidate_info.get('name')} - Attempt {call_status['attempts'] + 1}/3")
     
     webhook_url = f"{WEBHOOK_BASE_URL}/twilio-voice"
     
@@ -1938,10 +1937,10 @@ async def make_actual_call(request: Request):
         logger.info(f"Using webhook: {webhook_url}")
         logger.info(f"Using candidate: {candidate_info.get('email') or candidate_info.get('name')}")
         
-        # Test Twilio client initialization
+        # Initialize Twilio client
         try:
             client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            # Test credentials by fetching account info (this will fail if credentials are invalid)
+            # Validate credentials by fetching account info
             account = client.api.accounts(TWILIO_ACCOUNT_SID).fetch()
             logger.info(f"Twilio account validated: {account.friendly_name}")
         except Exception as cred_error:
@@ -1952,7 +1951,7 @@ async def make_actual_call(request: Request):
             }
         
         # Log call initiation
-        logger.info(f"🚀 Initiating call to {candidate_info.get('phone')} for {candidate_info.get('name')} (Attempt {call_status['attempts'] + 1}/3)")
+        logger.info(f"Initiating call to {candidate_info.get('phone')} for {candidate_info.get('name')} (Attempt {call_status['attempts'] + 1}/3)")
         log_system_event("INFO", "CALL_SYSTEM", "CALL_INITIATED", 
                         f"Initiating call to {candidate_info.get('phone')} for {candidate_info.get('name')} (Attempt {call_status['attempts'] + 1}/3)", 
                         candidate_id=candidate_id)
@@ -1977,7 +1976,7 @@ async def make_actual_call(request: Request):
             "outcome": "initiated",
             "notes": f"Call initiated to {candidate_info.get('name')} for {candidate_info.get('position')} position"
         }
-        logger.info(f"📊 Updating MongoDB call tracking for candidate {candidate_id}")
+        logger.info(f"Updating MongoDB call tracking for candidate {candidate_id}")
         update_candidate_call_tracking(candidate_id, call_data)
         
         # Also save to SQLite database with MongoDB candidate ID
@@ -2006,8 +2005,7 @@ async def make_actual_call(request: Request):
             "outcome": "in_progress" if updated_call.status in ['ringing', 'in-progress'] else updated_call.status,
             "notes": f"Call status updated: {updated_call.status}"
         }
-        # Don't increment attempts again, just update the last call record
-        # update_candidate_call_tracking(final_candidate_id, updated_call_data)
+        # Update call record without incrementing attempts
         
         if updated_call.status == 'failed':
             error_code = getattr(updated_call, 'error_code', 'Unknown')
@@ -2266,7 +2264,7 @@ async def call_specific_candidate(request: Request):
         # Initialize Twilio client
         client = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
         
-        # Test credentials
+        # Validate credentials
         try:
             account = client.api.accounts(TWILIO_ACCOUNT_SID).fetch()
             logger.info(f"Twilio account validated: {account.friendly_name}")
@@ -2444,7 +2442,7 @@ async def test_call_with_first_candidate():
             if candidate_id:
                 call_status = get_candidate_call_status(candidate_id)
                 if call_status["can_call"]:
-                    logger.info(f"🧪 Testing call to candidate: {candidate.get('name')} (ID: {candidate_id})")
+                    logger.info(f"Initiating test call to candidate: {candidate.get('name')} (ID: {candidate_id})")
                     
                     # Create a proper mock request for make_actual_call function
                     class MockRequest:
