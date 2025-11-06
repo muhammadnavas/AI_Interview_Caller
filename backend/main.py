@@ -234,8 +234,8 @@ def find_candidate_by_phone(phone_number: str) -> Optional[dict]:
         
     try:
         client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
-        db_name = config("MONGODB_DB", default="ai_interview_schedule")
-        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
 
         db = client[db_name]
         coll = db[coll_name]
@@ -244,25 +244,32 @@ def find_candidate_by_phone(phone_number: str) -> Optional[dict]:
         phone_variations = [
             phone_number,
             phone_number.replace(" ", "").replace("-", "").replace("(", "").replace(")", ""),
-            phone_number if phone_number.startswith("+") else f"+1{phone_number.replace('+', '')}",
-            phone_number.replace("+1", "") if phone_number.startswith("+1") else phone_number
+            # Handle Indian numbers: +917975091087 -> 7975091087
+            phone_number.replace("+91", "") if phone_number.startswith("+91") else phone_number,
+            # Handle US numbers: +1234567890 -> 234567890  
+            phone_number.replace("+1", "") if phone_number.startswith("+1") else phone_number,
+            # Add +91 prefix if not present and looks like Indian number
+            f"+91{phone_number}" if not phone_number.startswith("+") and len(phone_number) == 10 else phone_number,
+            # Add +1 prefix if not present
+            f"+1{phone_number}" if not phone_number.startswith("+") and len(phone_number) >= 10 else phone_number
         ]
 
         for phone_var in phone_variations:
             doc = coll.find_one({"$or": [
-                {"phone": phone_var},
-                {"phone_number": phone_var}
+                {"phoneNumber": phone_var},
+                {"phone": phone_var}
             ]})
             
             if doc:
                 candidate = {
                     "id": str(doc.get("_id")),
-                    "name": doc.get("name") or doc.get("full_name") or doc.get("candidate_name"),
-                    "phone": doc.get("phone") or doc.get("phone_number"),
-                    "email": doc.get("email"),
-                    "position": doc.get("position") or doc.get("role"),
-                    "company": doc.get("company") or doc.get("employer"),
-                    "call_tracking": doc.get("call_tracking", {})
+                    "name": doc.get("candidateName") or doc.get("name"),
+                    "phone": doc.get("phoneNumber") or doc.get("phone"),
+                    "email": doc.get("candidateEmail") or doc.get("email"),
+                    "position": doc.get("role") or doc.get("position"),
+                    "company": doc.get("companyName") or doc.get("company"),
+                    "call_tracking": doc.get("call_tracking", {}),
+                    "raw": doc  # Store the raw document for reference
                 }
                 logger.info(f"Found candidate by phone {phone_number}: {candidate.get('name')}")
                 return candidate
@@ -1019,8 +1026,13 @@ def get_candidate_scheduling_status(candidate_id: str) -> dict:
         
         # Check if there's call tracking data with interview details
         call_tracking = doc.get("call_tracking", {}) if doc else {}
+        call_tracking = call_tracking if isinstance(call_tracking, dict) else {}
+        
         interview_details = call_tracking.get("interview_details", {}) if call_tracking else {}
+        interview_details = interview_details if isinstance(interview_details, dict) else {}
+        
         email_status = interview_details.get("email_status", {}) if interview_details else {}
+        email_status = email_status if isinstance(email_status, dict) else {}
         
         scheduling_status = {
             "interview_status": interview_status,
@@ -1032,11 +1044,11 @@ def get_candidate_scheduling_status(candidate_id: str) -> dict:
                 "confirmation_method": interview_details.get("confirmation_method", None)
             },
             "email_notifications": {
-                "confirmation_sent": email_status.get("sent", False),
-                "email_status": email_status.get("status", "not_sent"),
-                "sent_at": email_status.get("sent_at", None),
-                "recipient_email": email_status.get("recipient", None),
-                "delivery_status": email_status.get("delivery_status", "unknown")
+                "confirmation_sent": email_status.get("sent", False) if email_status else False,
+                "email_status": email_status.get("status", "not_sent") if email_status else "not_sent",
+                "sent_at": email_status.get("sent_at", None) if email_status else None,
+                "recipient_email": email_status.get("recipient", None) if email_status else None,
+                "delivery_status": email_status.get("delivery_status", "unknown") if email_status else "unknown"
             },
             "conversation_status": call_tracking.get("conversation_status", "not_started"),
             "last_interaction": call_tracking.get("last_contact_date", None)
@@ -1337,7 +1349,10 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         }
         
         # Update candidate in MongoDB with email status
-        update_candidate_email_status(candidate.get('raw', {}).get('_id'), email_status)
+        candidate_raw = candidate.get('raw') if candidate else None
+        candidate_id_for_update = candidate_raw.get('_id') if candidate_raw else candidate.get('id') if candidate else None
+        if candidate_id_for_update:
+            update_candidate_email_status(candidate_id_for_update, email_status)
         
         return {
             "email_sent": True,
@@ -1363,8 +1378,10 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         }
         
         # Update candidate in MongoDB with email failure status
-        if candidate.get('raw', {}).get('_id'):
-            update_candidate_email_status(candidate.get('raw', {}).get('_id'), email_status)
+        candidate_raw = candidate.get('raw') if candidate else None
+        candidate_id_for_update = candidate_raw.get('_id') if candidate_raw else candidate.get('id') if candidate else None
+        if candidate_id_for_update:
+            update_candidate_email_status(candidate_id_for_update, email_status)
         
         return {
             "email_sent": False,
@@ -1484,8 +1501,15 @@ async def twilio_voice(request: Request):
         
         logger.info(f"Incoming call - CallSid: {call_sid}, From: {from_number}, To: {to_number}, Status: {call_status}")
         
-        # Create or get session for this call
-        session = get_or_create_session(call_sid, from_number)
+        # Find candidate by phone number first
+        candidate = find_candidate_by_phone(from_number)
+        if candidate:
+            logger.info(f"Found candidate for incoming call: {candidate.get('name')} ({candidate.get('phone')})")
+        else:
+            logger.warning(f"Could not find candidate for phone number: {from_number}")
+        
+        # Create or get session for this call with candidate info
+        session = get_or_create_session(call_sid, from_number, candidate)
         
         # Get appropriate greeting based on candidate data
         greeting = get_ai_greeting(session.candidate)
