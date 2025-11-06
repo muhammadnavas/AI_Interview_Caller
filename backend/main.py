@@ -1093,8 +1093,21 @@ def update_candidate_email_status(candidate_id: str, email_status: dict) -> bool
         db = client[db_name]
         coll = db[coll_name]
 
-        # Update candidate with email status
+        # Update candidate with email status - ensure parent structure exists
         try:
+            # First, ensure the call_tracking and interview_details structure exists
+            coll.update_one(
+                {"_id": ObjectId(candidate_id)},
+                {
+                    "$setOnInsert": {
+                        "call_tracking.interview_details": {},
+                        "call_tracking.created_at": datetime.now().isoformat()
+                    }
+                },
+                upsert=True
+            )
+            
+            # Then update the email status
             result = coll.update_one(
                 {"_id": ObjectId(candidate_id)},
                 {
@@ -1339,12 +1352,23 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         msg.attach(part1)
         msg.attach(part2)
         
-        # Send email
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USERNAME, SMTP_PASSWORD)
-        server.send_message(msg)
-        server.quit()
+        # Send email with improved error handling
+        server = None
+        try:
+            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
+            server.starttls()
+            server.login(SMTP_USERNAME, SMTP_PASSWORD)
+            server.send_message(msg)
+            logger.info(f"Email sent successfully to {candidate_email}")
+        except Exception as smtp_error:
+            logger.error(f"SMTP error sending email: {smtp_error}")
+            raise smtp_error
+        finally:
+            if server:
+                try:
+                    server.quit()
+                except:
+                    pass
         
         logger.info(f"Interview confirmation email sent to {candidate_email} for slot: {confirmed_slot}")
         
@@ -1675,54 +1699,71 @@ async def process_speech(request: Request):
                 # Look for specific time mentioned
                 mentioned_slot = find_mentioned_time_slot(speech_result, TIME_SLOTS)
                 if mentioned_slot:
-                    confirmed_slot = mentioned_slot
-                    session.confirmed_slot = confirmed_slot
-                    session.status = "completed"
-                    session.end_time = datetime.now().isoformat()
-                    
-                    # Get candidate info for comprehensive tracking
-                    candidate = session.candidate or CANDIDATE
-                    if isinstance(candidate, dict) and candidate.get('id'):
-                        candidate_id = candidate.get('id')
-                    elif session.candidate_phone:
-                        # If no candidate ID, try to find candidate by phone
-                        found_candidate = find_candidate_by_phone(session.candidate_phone)
-                        if found_candidate:
-                            candidate_id = found_candidate.get('id')
-                            session.candidate = found_candidate  # Update session with found candidate
-                            candidate = found_candidate  # Update candidate for email
-                        else:
-                            candidate_id = f"phone_{session.candidate_phone}"
-                    else:
-                        candidate_id = candidate.get('email', 'unknown')
-                    
-                    logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
-                    
-                    # Send confirmation email
                     try:
-                        email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
-                    except Exception as email_error:
-                        logger.error(f"Failed to send confirmation email: {email_error}")
+                        confirmed_slot = mentioned_slot
+                        session.confirmed_slot = confirmed_slot
+                        session.status = "completed"
+                        session.end_time = datetime.now().isoformat()
+                        
+                        # Get candidate info for comprehensive tracking
+                        candidate = session.candidate or CANDIDATE
+                        candidate_id = None
+                        
+                        try:
+                            if isinstance(candidate, dict) and candidate.get('id'):
+                                candidate_id = candidate.get('id')
+                            elif session.candidate_phone:
+                                # If no candidate ID, try to find candidate by phone
+                                found_candidate = find_candidate_by_phone(session.candidate_phone)
+                                if found_candidate:
+                                    candidate_id = found_candidate.get('id')
+                                    session.candidate = found_candidate  # Update session with found candidate
+                                    candidate = found_candidate  # Update candidate for email
+                                else:
+                                    candidate_id = f"phone_{session.candidate_phone}"
+                            else:
+                                candidate_id = candidate.get('email', 'unknown') if candidate else 'unknown'
+                        except Exception as candidate_error:
+                            logger.error(f"Error processing candidate info: {candidate_error}")
+                            candidate_id = 'unknown'
+                        
+                        logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
+                        
+                        # Send confirmation email (don't let this block the confirmation)
                         email_sent = False
-                    
-                    # Save interview schedule to MongoDB with comprehensive status
-                    try:
-                        interview_details = {
-                            "confirmed_slot": confirmed_slot,
-                            "call_sid": call_sid,
-                            "email_status": email_sent if isinstance(email_sent, dict) else {
-                                "sent": bool(email_sent),
-                                "status": "sent" if email_sent else "failed",
-                                "sent_at": datetime.now().isoformat() if email_sent else None
-                            },
-                            "scheduled_at": datetime.now().isoformat(),
-                            "confirmation_method": "phone_call",
-                            "interview_status": "scheduled",
-                            "scheduling_completed": True,
-                            "candidate_confirmed": True
-                        }
-                        update_candidate_interview_scheduled(candidate_id, interview_details)
-                        logger.info(f"📝 Updated MongoDB with comprehensive interview details for candidate {candidate_id}")
+                        try:
+                            if candidate and candidate.get('email'):
+                                email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                            else:
+                                logger.warning("No candidate email available for confirmation")
+                        except Exception as email_error:
+                            logger.error(f"Failed to send confirmation email: {email_error}")
+                            email_sent = False
+                        
+                        # Save interview schedule to MongoDB (don't let this block the confirmation)
+                        try:
+                            interview_details = {
+                                "confirmed_slot": confirmed_slot,
+                                "call_sid": call_sid,
+                                "email_status": email_sent if isinstance(email_sent, dict) else {
+                                    "sent": bool(email_sent),
+                                    "status": "sent" if email_sent else "failed",
+                                    "sent_at": datetime.now().isoformat() if email_sent else None
+                                },
+                                "scheduled_at": datetime.now().isoformat(),
+                                "confirmation_method": "phone_call",
+                                "interview_status": "scheduled",
+                                "scheduling_completed": True,
+                                "candidate_confirmed": True
+                            }
+                            if candidate_id and candidate_id != 'unknown':
+                                update_candidate_interview_scheduled(candidate_id, interview_details)
+                                logger.info(f"Updated MongoDB with interview details for candidate {candidate_id}")
+                            else:
+                                logger.warning("Could not update MongoDB - no valid candidate ID")
+                        except Exception as db_error:
+                            logger.error(f"Failed to update MongoDB: {db_error}")
+                            # Continue anyway - the confirmation can still work
                     except Exception as mongo_error:
                         logger.error(f"Failed to update MongoDB: {mongo_error}")
                     
