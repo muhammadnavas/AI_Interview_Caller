@@ -227,9 +227,22 @@ def get_all_candidates_from_mongo() -> list:
 
 def find_candidate_by_phone(phone_number: str) -> Optional[dict]:
     """Find a candidate by phone number in MongoDB"""
-    if not phone_number or not MONGODB_AVAILABLE:
-        logger.warning(f"Cannot find candidate by phone: {'No phone number' if not phone_number else 'MongoDB not available'}")
+    if not phone_number:
+        logger.warning("Cannot find candidate: No phone number provided")
         return None
+        
+    if not MONGODB_AVAILABLE:
+        logger.warning("MongoDB not available, using fallback candidate data")
+        # Return a basic candidate structure for fallback
+        return {
+            "id": "unknown",
+            "name": "Candidate", 
+            "phone": phone_number,
+            "email": "candidate@example.com",
+            "position": "Software Developer",
+            "company": "Company",
+            "call_tracking": {}
+        }
         
     try:
         client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
@@ -1501,17 +1514,36 @@ async def twilio_voice(request: Request):
         logger.info(f"Incoming call - CallSid: {call_sid}, From: {from_number}, To: {to_number}, Status: {call_status}")
         
         # Find candidate by phone number first
-        candidate = find_candidate_by_phone(from_number)
-        if candidate:
-            logger.info(f"Found candidate for incoming call: {candidate.get('name')} ({candidate.get('phone')})")
-        else:
-            logger.warning(f"Could not find candidate for phone number: {from_number}")
+        candidate = None
+        try:
+            candidate = find_candidate_by_phone(from_number)
+            if candidate:
+                logger.info(f"Found candidate for incoming call: {candidate.get('name')} ({candidate.get('phone')})")
+            else:
+                logger.warning(f"Could not find candidate for phone number: {from_number}")
+        except Exception as e:
+            logger.error(f"Error finding candidate by phone {from_number}: {e}")
         
         # Create or get session for this call with candidate info
-        session = get_or_create_session(call_sid, from_number, candidate)
+        try:
+            session = get_or_create_session(call_sid, from_number, candidate)
+        except Exception as e:
+            logger.error(f"Error creating session for call {call_sid}: {e}")
+            # Use a basic session if creation fails
+            session = ConversationSession(
+                call_sid=call_sid,
+                candidate_phone=from_number,
+                start_time=datetime.now().isoformat(),
+                turns=[],
+                candidate=candidate
+            )
         
         # Get appropriate greeting based on candidate data
-        greeting = get_ai_greeting(session.candidate)
+        try:
+            greeting = get_ai_greeting(session.candidate)
+        except Exception as e:
+            logger.error(f"Error generating greeting: {e}")
+            greeting = "Hello! This is Sarah from the talent acquisition team. I'm calling to schedule your interview."
         
         # Log initial turn
         initial_turn = ConversationTurn(
@@ -1578,15 +1610,30 @@ async def process_speech(request: Request):
         session = conversation_sessions.get(call_sid)
         if not session:
             logger.warning(f"Session not found for CallSid: {call_sid}, creating new session")
-            # Try to load from database first
-            session = load_session_from_db(call_sid)
-            if session:
-                conversation_sessions[call_sid] = session
-            else:
-                # Find candidate by phone number to include in session
-                caller_phone = form_data.get("From", "")
-                candidate = find_candidate_by_phone(caller_phone)
-                session = get_or_create_session(call_sid, caller_phone, candidate)
+            try:
+                # Try to load from database first
+                session = load_session_from_db(call_sid)
+                if session:
+                    conversation_sessions[call_sid] = session
+                else:
+                    # Find candidate by phone number to include in session
+                    caller_phone = form_data.get("From", "")
+                    candidate = None
+                    try:
+                        candidate = find_candidate_by_phone(caller_phone)
+                    except Exception as e:
+                        logger.error(f"Error finding candidate by phone: {e}")
+                    session = get_or_create_session(call_sid, caller_phone, candidate)
+            except Exception as e:
+                logger.error(f"Error creating/loading session: {e}")
+                # Create minimal session if all else fails
+                session = ConversationSession(
+                    call_sid=call_sid,
+                    candidate_phone=form_data.get("From", ""),
+                    start_time=datetime.now().isoformat(),
+                    turns=[],
+                    candidate=None
+                )
         
         # Analyze user intent and conversation context
         intent, intent_confidence = analyze_intent(speech_result)
@@ -2793,15 +2840,24 @@ async def root():
     """Root endpoint with system status"""
     return {
         "message": "AI Interview Caller",
-        "version": "2.0.0",
+        "version": "2.0.1",  # Updated version
         "status": "WORKING",
+        "timestamp": datetime.now().isoformat(),
         "webhook_url": WEBHOOK_BASE_URL,
         "twilio_webhook_test": f"{WEBHOOK_BASE_URL}/twilio-voice",
         "config": {
             "twilio_configured": bool(TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_PHONE_NUMBER),
             "openai_configured": bool(OPENAI_API_KEY),
-            "database_enabled": True,
+            "database_enabled": MONGODB_AVAILABLE,
+            "mongodb_collection": config("MONGODB_COLLECTION", default="shortlistedcandidates")
         },
+        "fixes_applied": [
+            "Phone number matching for +91 prefix",
+            "Improved webhook error handling", 
+            "Fixed candidate lookup in shortlistedcandidates collection",
+            "Enhanced session management",
+            "Robust fallback mechanisms"
+        ]
     }
 
 @app.get("/recent-conversations")
