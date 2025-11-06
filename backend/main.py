@@ -2313,6 +2313,87 @@ async def call_specific_candidate(request: Request):
                 "suggestion": "Check your Twilio console for more details"
             }
 
+@app.get("/candidates")
+async def get_candidates():
+    """Get all available candidates for selection"""
+    try:
+        candidates = get_all_candidates_from_mongo()
+        if not candidates:
+            return {"status": "error", "message": "No candidates found", "candidates": []}
+        
+        # Format candidates for frontend
+        formatted_candidates = []
+        for candidate in candidates:
+            candidate_id = candidate.get("candidate_id")
+            call_status = get_candidate_call_status(candidate_id) if candidate_id else {"can_call": False}
+            
+            candidate_info = {
+                "id": candidate_id,
+                "name": candidate.get("name", "Unknown"),
+                "phone": candidate.get("phone", "Unknown"),
+                "email": candidate.get("email", "Unknown"),
+                "position": candidate.get("position", "Unknown"),
+                "company": candidate.get("company", "Unknown"),
+                "call_status": call_status
+            }
+            formatted_candidates.append(candidate_info)
+        
+        return {
+            "status": "success",
+            "candidates": formatted_candidates,
+            "total": len(formatted_candidates)
+        }
+    
+    except Exception as e:
+        logger.error(f"Failed to get candidates: {e}")
+        return {"status": "error", "message": str(e), "candidates": []}
+
+@app.post("/call-candidate/{candidate_id}")
+async def call_specific_candidate(candidate_id: str):
+    """Make a call to a specific candidate by ID"""
+    try:
+        # Validate candidate exists
+        candidate = fetch_candidate_by_id(candidate_id)
+        if not candidate:
+            return {"status": "error", "message": f"Candidate with ID {candidate_id} not found"}
+        
+        # Check if candidate can receive calls
+        call_status = get_candidate_call_status(candidate_id)
+        if not call_status["can_call"]:
+            return {
+                "status": "error", 
+                "message": f"Cannot call candidate: {call_status['reason']}"
+            }
+        
+        logger.info(f"🎯 Making call to selected candidate: {candidate.get('name', 'Unknown')} (ID: {candidate_id})")
+        
+        # Create a proper mock request for make_actual_call function
+        class MockRequest:
+            def __init__(self, json_data):
+                self._json_data = json_data
+                
+            async def json(self):
+                return self._json_data
+        
+        try:
+            mock_request = MockRequest({"candidate_id": candidate_id})
+            result = await make_actual_call(mock_request)
+        except Exception as e:
+            result = {"status": "error", "message": f"Function call failed: {str(e)}"}
+        
+        return {
+            "status": result.get("status", "success"),
+            "message": f"Call initiated for {candidate.get('name', 'Unknown')}",
+            "candidate_id": candidate_id,
+            "candidate_name": candidate.get('name', 'Unknown'),
+            "candidate_phone": candidate.get('phone', 'Unknown'),
+            "call_result": result
+        }
+    
+    except Exception as e:
+        logger.error(f"Call to candidate {candidate_id} failed: {e}")
+        return {"status": "error", "message": f"Call failed: {str(e)}"}
+
 @app.post("/test-call")
 async def test_call_with_first_candidate():
     """Test call endpoint - makes a call using the first available candidate"""
@@ -2333,19 +2414,19 @@ async def test_call_with_first_candidate():
                 if call_status["can_call"]:
                     logger.info(f"🧪 Testing call to candidate: {candidate.get('name')} (ID: {candidate_id})")
                     
-                    # Make internal HTTP request to make-actual-call endpoint
-                    import httpx
+                    # Create a proper mock request for make_actual_call function
+                    class MockRequest:
+                        def __init__(self, json_data):
+                            self._json_data = json_data
+                            
+                        async def json(self):
+                            return self._json_data
                     
-                    async with httpx.AsyncClient() as client:
-                        try:
-                            response = await client.post(
-                                "http://localhost:8000/make-actual-call",
-                                json={"candidate_id": candidate_id},
-                                headers={"Content-Type": "application/json"}
-                            )
-                            result = response.json()
-                        except Exception as e:
-                            result = {"status": "error", "message": f"Internal request failed: {str(e)}"}
+                    try:
+                        mock_request = MockRequest({"candidate_id": candidate_id})
+                        result = await make_actual_call(mock_request)
+                    except Exception as e:
+                        result = {"status": "error", "message": f"Function call failed: {str(e)}"}
                     
                     return {
                         "status": "success",
