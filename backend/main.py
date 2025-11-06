@@ -1009,14 +1009,18 @@ def get_candidate_scheduling_status(candidate_id: str) -> dict:
         if not doc:
             return {"scheduling_status": "not_found", "reason": "Candidate not found"}
 
-        # Extract scheduling information
-        interview_status = doc.get("interviewStatus", "not_scheduled")
-        scheduled_date = doc.get("scheduledInterviewDate", None)
+        # Ensure doc is a dictionary before proceeding
+        if not isinstance(doc, dict):
+            return {"scheduling_status": "error", "reason": "Invalid candidate document format"}
+
+        # Extract scheduling information with safe access
+        interview_status = doc.get("interviewStatus", "not_scheduled") if doc else "not_scheduled"
+        scheduled_date = doc.get("scheduledInterviewDate", None) if doc else None
         
         # Check if there's call tracking data with interview details
-        call_tracking = doc.get("call_tracking", {})
-        interview_details = call_tracking.get("interview_details", {})
-        email_status = interview_details.get("email_status", {})
+        call_tracking = doc.get("call_tracking", {}) if doc else {}
+        interview_details = call_tracking.get("interview_details", {}) if call_tracking else {}
+        email_status = interview_details.get("email_status", {}) if interview_details else {}
         
         scheduling_status = {
             "interview_status": interview_status,
@@ -1906,7 +1910,7 @@ async def make_actual_call(request: Request):
         }
     
     try:
-        logger.info(f"Initiating call to {CANDIDATE['phone']}")
+        logger.info(f"Initiating call to {candidate_info.get('phone')}")
         logger.info(f"Using webhook: {webhook_url}")
         logger.info(f"Using candidate: {candidate_info.get('email') or candidate_info.get('name')}")
         
@@ -2023,7 +2027,11 @@ async def make_actual_call(request: Request):
                         call_sid=call.sid, candidate_id=candidate_id)
 
         # Get current scheduling status from the candidate document
-        scheduling_status = get_candidate_scheduling_status(candidate_id)
+        try:
+            scheduling_status = get_candidate_scheduling_status(candidate_id)
+        except Exception as e:
+            logger.error(f"Failed to get scheduling status: {e}")
+            scheduling_status = {"scheduling_status": "error", "reason": str(e)}
         
         return {
             "status": "success",
@@ -2056,7 +2064,7 @@ async def make_actual_call(request: Request):
         if "not a valid phone number" in error_msg.lower():
             return {
                 "status": "error",
-                "message": f"Invalid phone number format: {CANDIDATE['phone']}. Use format: +1234567890"
+                "message": f"Invalid phone number format: {candidate_info.get('phone')}. Use format: +1234567890"
             }
         elif "twilio" in error_msg.lower() and "credentials" in error_msg.lower():
             return {
