@@ -395,7 +395,7 @@ def create_candidate_with_id(name: str, phone: str, email: str = None, position:
         from pymongo import MongoClient
         import uuid
         
-        client = MongoClient('mongodb://localhost:27017/')
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
         db = client['interview_scheduler']
         
         # Generate unique candidate ID
@@ -545,7 +545,7 @@ def log_system_event(level: str, component: str, action: str, details: str, call
     try:
         from pymongo import MongoClient
         
-        client = MongoClient('mongodb://localhost:27017/')
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
         db = client['interview_scheduler']
         
         log_entry = {
@@ -572,7 +572,7 @@ def check_call_limit(candidate_id: str, max_attempts: int = 3) -> tuple[bool, in
     try:
         from pymongo import MongoClient
         
-        client = MongoClient('mongodb://localhost:27017/')
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
         db = client['interview_scheduler']
         
         # Find candidate in MongoDB using candidate_id field
@@ -612,7 +612,7 @@ def update_candidate_status(candidate_id: str, status: str, notes: str = None):
     try:
         from pymongo import MongoClient
         
-        client = MongoClient('mongodb://localhost:27017/')
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
         db = client['interview_scheduler']
         
         # Update candidate status in MongoDB using candidate_id field
@@ -644,7 +644,7 @@ def load_session_from_db(call_sid: str) -> Optional[ConversationSession]:
     try:
         from pymongo import MongoClient
         
-        client = MongoClient('mongodb://localhost:27017/')
+        client = MongoClient(config("MONGODB_URI", default="mongodb://localhost:27017"))
         db = client['interview_scheduler']
         
         session_data = db.conversations.find_one({"call_sid": call_sid})
@@ -1511,22 +1511,33 @@ async def twilio_voice(request: Request):
         to_number = form_data.get("To", "")
         call_status = form_data.get("CallStatus", "")
         
-        logger.info(f"Incoming call - CallSid: {call_sid}, From: {from_number}, To: {to_number}, Status: {call_status}")
+        logger.info(f"Call webhook - CallSid: {call_sid}, From: {from_number}, To: {to_number}, Status: {call_status}")
         
-        # Find candidate by phone number first
+        # Determine if this is an outbound call (from our Twilio number) or inbound call
+        candidate_phone = None
+        if from_number == TWILIO_PHONE_NUMBER:
+            # Outbound call - we called the candidate, so candidate phone is 'To'
+            candidate_phone = to_number
+            logger.info(f"Outbound call detected - candidate phone: {candidate_phone}")
+        else:
+            # Inbound call - candidate called us, so candidate phone is 'From'  
+            candidate_phone = from_number
+            logger.info(f"Inbound call detected - candidate phone: {candidate_phone}")
+        
+        # Find candidate by phone number
         candidate = None
         try:
-            candidate = find_candidate_by_phone(from_number)
+            candidate = find_candidate_by_phone(candidate_phone)
             if candidate:
-                logger.info(f"Found candidate for incoming call: {candidate.get('name')} ({candidate.get('phone')})")
+                logger.info(f"Found candidate: {candidate.get('name')} ({candidate.get('phone')})")
             else:
-                logger.warning(f"Could not find candidate for phone number: {from_number}")
+                logger.warning(f"Could not find candidate for phone number: {candidate_phone}")
         except Exception as e:
-            logger.error(f"Error finding candidate by phone {from_number}: {e}")
+            logger.error(f"Error finding candidate by phone {candidate_phone}: {e}")
         
         # Create or get session for this call with candidate info
         try:
-            session = get_or_create_session(call_sid, from_number, candidate)
+            session = get_or_create_session(call_sid, candidate_phone, candidate)
         except Exception as e:
             logger.error(f"Error creating session for call {call_sid}: {e}")
             # Use a basic session if creation fails
