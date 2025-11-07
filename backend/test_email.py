@@ -11,44 +11,52 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from main import send_interview_confirmation_email, config
 
-async def test_email_sending():
-    """Test the email sending functionality"""
-    print("🧪 Testing Resend Email API Integration...")
+import asyncio
+import sys
+import os
+sys.path.append('.')
+
+# Import the main module
+from main import send_interview_confirmation_email
+
+async def test_resend_email():
+    """Test email sending with Resend API (HTTP-only, no SMTP)"""
+    print("🧪 Testing Resend email functionality (HTTP-only)...")
     
-    # Test candidate info
     candidate_info = {
         'name': 'Test Candidate',
-        'email': 'navasns0409@gmail.com',  # Use your email for testing
-        'position': 'AI Engineer', 
-        'company': 'LinkUp',
-        'raw': None  # No MongoDB document for test
+        'email': 'navasns0409@gmail.com',  # Your test email
+        'position': 'Software Engineer', 
+        'company': 'LinkUp'
     }
     
     try:
-        print(f"📧 Sending test email to: {candidate_info['email']}")
-        print(f"🔑 Resend API Key configured: {'Yes' if config('RESEND_API_KEY') else 'No'}")
-        
         result = await send_interview_confirmation_email(
             candidate_info, 
             'Monday at 10 AM', 
-            'TEST_CALL_123'
+            'TEST-CALL-RESEND-123'
         )
         
-        print(f"\n✅ Email Function Result:")
-        print(f"   Status: {result.get('status', 'unknown')}")
-        print(f"   Email Sent: {result.get('email_sent', False)}")
-        print(f"   Recipient: {result.get('recipient', 'unknown')}")
-        print(f"   Method: {result.get('method', 'unknown')}")
+        print(f"✅ Email test result: {result}")
         
-        if result.get('email_sent'):
-            print("🎉 SUCCESS: Email should be delivered!")
+        # Check if email was actually sent via HTTP API
+        if result.get('email_sent') == True:
+            print(f"🎉 SUCCESS: Email sent via {result.get('service', 'Unknown')}")
+        elif result.get('status') == 'logged_for_manual':
+            print("⚠️  Email logged for manual processing")
         else:
-            print(f"❌ FAILED: {result.get('error', 'Unknown error')}")
+            print(f"❌ Email failed: {result.get('error', 'Unknown error')}")
             
+        return result
     except Exception as e:
-        print(f"❌ Test failed with exception: {e}")
+        print(f"❌ Email test failed with exception: {e}")
         import traceback
         traceback.print_exc()
+        return None
+
+if __name__ == "__main__":
+    result = asyncio.run(test_resend_email())
+    print(f"\n🎯 Final test result: {result}")
 
 if __name__ == "__main__":
     print("=" * 50)

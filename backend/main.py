@@ -1378,28 +1378,34 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         msg.attach(part1)
         msg.attach(part2)
         
-        # Send email with Resend API (primary) and fallbacks
+        # Send email using HTTP-based APIs only (SMTP blocked on Render)
         email_sent = False
+        email_service_used = None
         
         # Try Resend API first (most reliable on Render)
         resend_api_key = config("RESEND_API_KEY", default=None)
-        if resend_api_key:
+        if resend_api_key and not email_sent:
             try:
-                logger.info(f"Attempting to send email via Resend API to {candidate_email}")
+                logger.info(f"🚀 Attempting Resend API to {candidate_email}")
                 
                 resend_url = "https://api.resend.com/emails"
+                # Use your verified domain from the Node.js code
+                from_email = config("RESEND_FROM_EMAIL", default="JobPortal@notezy.online")
+                
                 resend_payload = {
-                    "from": f"Sarah Johnson - LinkUp Talent Team <{SENDER_EMAIL}>",
+                    "from": f"Sarah Johnson - LinkUp Talent Team <{from_email}>",
                     "to": [candidate_email],
                     "subject": subject,
                     "html": html_body,
                     "text": text_body,
                     "headers": {
-                        "X-Entity-Ref-ID": call_sid
+                        "X-Entity-Ref-ID": call_sid,
+                        "Reply-To": SENDER_EMAIL
                     },
                     "tags": [
                         {"name": "category", "value": "interview-confirmation"},
-                        {"name": "candidate", "value": candidate_name.replace(" ", "_")}
+                        {"name": "candidate_name", "value": candidate_name.replace(" ", "_")},
+                        {"name": "call_sid", "value": call_sid}
                     ]
                 }
                 
@@ -1418,22 +1424,21 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
                 if response.status_code in (200, 201):
                     response_data = response.json()
                     email_id = response_data.get('id', 'unknown')
-                    logger.info(f"✅ Resend API: Email successfully sent to {candidate_email} (ID: {email_id})")
+                    logger.info(f"✅ Resend API SUCCESS: Email sent to {candidate_email} (ID: {email_id})")
                     email_sent = True
+                    email_service_used = "Resend"
                 else:
                     logger.error(f"❌ Resend API error: {response.status_code} - {response.text}")
                     
             except Exception as resend_error:
-                logger.error(f"Resend API failed: {resend_error}")
-        else:
-            logger.warning("RESEND_API_KEY not configured, skipping Resend API")
+                logger.error(f"💥 Resend API failed: {resend_error}")
         
         # Fallback to SendGrid if Resend failed
         if not email_sent:
             sendgrid_api_key = config("SENDGRID_API_KEY", default=None)
             if sendgrid_api_key:
                 try:
-                    logger.info(f"Attempting SendGrid API fallback to {candidate_email}")
+                    logger.info(f"🔄 Trying SendGrid API fallback to {candidate_email}")
                     
                     sendgrid_url = "https://api.sendgrid.com/v3/mail/send"
                     sendgrid_payload = {
@@ -1444,10 +1449,16 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
                             }
                         ],
                         "from": {"email": SENDER_EMAIL, "name": "Sarah Johnson - LinkUp Talent Team"},
+                        "reply_to": {"email": SENDER_EMAIL},
                         "content": [
                             {"type": "text/plain", "value": text_body},
                             {"type": "text/html", "value": html_body}
-                        ]
+                        ],
+                        "tracking_settings": {
+                            "click_tracking": {"enable": True},
+                            "open_tracking": {"enable": True}
+                        },
+                        "categories": ["interview-confirmation", "ai-scheduler"]
                     }
                     
                     sendgrid_headers = {
@@ -1463,166 +1474,114 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
                     )
                     
                     if response.status_code in (200, 202):
-                        logger.info(f"✅ SendGrid fallback: Email sent to {candidate_email}")
+                        logger.info(f"✅ SendGrid API SUCCESS: Email sent to {candidate_email}")
                         email_sent = True
+                        email_service_used = "SendGrid"
                     else:
-                        logger.error(f"❌ SendGrid fallback error: {response.status_code} - {response.text}")
+                        logger.error(f"❌ SendGrid API error: {response.status_code} - {response.text}")
                         
                 except Exception as sendgrid_error:
-                    logger.error(f"SendGrid fallback failed: {sendgrid_error}")
-        
-        # Final fallback to SMTP if both API methods failed
-        if not email_sent:
-            server = None
-            # Try primary SMTP (Gmail)
-            try:
-                logger.info(f"Attempting SMTP fallback via {SMTP_SERVER}:{SMTP_PORT}")
-                server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
-                server.starttls()
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.send_message(msg)
-                logger.info(f"Email sent successfully to {candidate_email} via SMTP")
-                email_sent = True
-            except Exception as smtp_error:
-                logger.error(f"Primary SMTP error: {smtp_error}")
-                logger.error(f"SMTP Config: Server={SMTP_SERVER}, Port={SMTP_PORT}, User={SMTP_USERNAME[:5]}***")
-                
-                # Try alternative SMTP port (465 SSL)
-                try:
-                    logger.info("Trying alternative SMTP with SSL port 465...")
-                    if server:
-                        try:
-                            server.quit()
-                        except:
-                            pass
-                    
-                    server = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=30)
-                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                    server.send_message(msg)
-                    logger.info(f"Email sent successfully via SSL to {candidate_email}")
-                    email_sent = True
-                except Exception as ssl_error:
-                    logger.error(f"SSL SMTP also failed: {ssl_error}")
-                    
-                    # Try HTTP-based email service as final fallback
-                    try:
-                        logger.info("Attempting HTTP-based email fallback...")
-                        
-                        # For now, log the email content as a structured fallback
-                        logger.warning(f"📧 FALLBACK EMAIL LOG for {candidate_email}:")
-                        logger.warning(f"   Subject: {subject}")
-                        logger.warning(f"   Scheduled Slot: {confirmed_slot}")
-                        logger.warning(f"   Call SID: {call_sid}")
-                        logger.warning(f"   Content Length: {len(html_body)} chars")
-                        
-                        email_sent = "fallback"  # Mark as fallback success
-                        
-                    except Exception as http_error:
-                        logger.error(f"HTTP email fallback also failed: {http_error}")
-                        email_sent = False
-            finally:
-                if server:
-                    try:
-                        server.quit()
-                    except:
-                        pass
-        
-        if not email_sent or email_sent == "fallback":
-            if email_sent == "fallback":
-                logger.warning(f"Email sent via fallback method for {candidate_email}")
-                # Treat fallback as success but with different status
-                email_status = {
-                    "sent": True,
-                    "status": "sent_via_fallback", 
-                    "sent_at": datetime.now().isoformat(),
-                    "recipient": candidate_email,
-                    "subject": subject,
-                    "confirmed_slot": confirmed_slot,
-                    "delivery_status": "fallback_logged",
-                    "call_sid": call_sid,
-                    "method": "logged_fallback"
-                }
-                
-                candidate_raw = candidate.get('raw') if candidate else None
-                candidate_id_for_update = candidate_raw.get('_id') if candidate_raw else candidate.get('id') if candidate else None
-                if candidate_id_for_update:
-                    try:
-                        update_candidate_email_status(candidate_id_for_update, email_status)
-                    except Exception as update_error:
-                        logger.error(f"Failed to update fallback email status: {update_error}")
-                
-                return {
-                    "email_sent": True,  # Treat fallback as success for conversation flow
-                    "status": "fallback_success", 
-                    "recipient": candidate_email,
-                    "sent_at": datetime.now().isoformat(),
-                    "subject": subject,
-                    "confirmed_slot": confirmed_slot,
-                    "method": "fallback_logged"
-                }
+                    logger.error(f"💥 SendGrid API failed: {sendgrid_error}")
             else:
-                logger.warning(f"All email attempts failed for {candidate_email}, continuing without email confirmation")
+                logger.warning("📧 SENDGRID_API_KEY not configured, skipping SendGrid")
+        
+        # Final fallback - log email for manual sending (SMTP not available on Render)
+        if not email_sent:
+            logger.warning("⚠️  All HTTP email providers failed - logging email for manual processing")
+            logger.warning(f"📧 EMAIL LOG for {candidate_email}:")
+            logger.warning(f"   Subject: {subject}")
+            logger.warning(f"   Scheduled Slot: {confirmed_slot}")
+            logger.warning(f"   Call SID: {call_sid}")
+            logger.warning(f"   Content Preview: {text_body[:200]}...")
+            logger.warning(f"   Full HTML Length: {len(html_body)} chars")
             
-            # Return structured response even when email fails
+            # Mark as logged for manual follow-up
+            email_sent = "logged"
+            email_service_used = "Manual Log"
+        
+        # Process email results and update database
+        if email_sent == True:
+            logger.info(f"✅ Email successfully sent to {candidate_email} via {email_service_used}")
+            email_status = {
+                "sent": True,
+                "status": "delivered",
+                "sent_at": datetime.now().isoformat(),
+                "recipient": candidate_email,
+                "subject": subject,
+                "confirmed_slot": confirmed_slot,
+                "delivery_status": f"sent_via_{email_service_used.lower()}",
+                "call_sid": call_sid,
+                "service": email_service_used
+            }
+        elif email_sent == "logged":
+            logger.warning(f"⚠️ Email logged for manual processing: {candidate_email}")
             email_status = {
                 "sent": False,
-                "status": "failed_network_unreachable", 
+                "status": "logged_for_manual_processing",
                 "sent_at": datetime.now().isoformat(),
                 "recipient": candidate_email,
                 "subject": subject,
                 "confirmed_slot": confirmed_slot,
-                "delivery_status": "network_error",
+                "delivery_status": "manual_follow_up_required",
                 "call_sid": call_sid,
-                "error": "SMTP network unreachable - Render may be blocking outbound SMTP"
+                "service": "Manual Log",
+                "note": "All API providers failed - email logged for manual sending"
             }
-            
-            # Still try to update candidate in MongoDB with failure status
-            candidate_raw = candidate.get('raw') if candidate else None
-            candidate_id_for_update = candidate_raw.get('_id') if candidate_raw else candidate.get('id') if candidate else None
-            if candidate_id_for_update:
-                try:
-                    update_candidate_email_status(candidate_id_for_update, email_status)
-                except Exception as update_error:
-                    logger.error(f"Failed to update email failure status: {update_error}")
-            
-            return {
-                "email_sent": False,
-                "status": "network_error",
-                "recipient": candidate_email,
+        else:
+            logger.error(f"❌ All email delivery methods failed for {candidate_email}")
+            email_status = {
+                "sent": False,
+                "status": "failed_all_providers",
                 "sent_at": datetime.now().isoformat(),
+                "recipient": candidate_email,
                 "subject": subject,
                 "confirmed_slot": confirmed_slot,
-                "error": "Network unreachable"
+                "delivery_status": "complete_failure",
+                "call_sid": call_sid,
+                "error": "All HTTP email providers and logging failed"
             }
         
-        logger.info(f"Interview confirmation email sent to {candidate_email} for slot: {confirmed_slot}")
-        
-        # Update candidate document with email status
-        email_status = {
-            "sent": True,
-            "status": "delivered",
-            "sent_at": datetime.now().isoformat(),
-            "recipient": candidate_email,
-            "subject": subject,
-            "confirmed_slot": confirmed_slot,
-            "delivery_status": "sent_successfully",
-            "call_sid": call_sid
-        }
-        
-        # Update candidate in MongoDB with email status
+        # Update candidate document with email status (success or failure)
         candidate_raw = candidate.get('raw') if candidate else None
         candidate_id_for_update = candidate_raw.get('_id') if candidate_raw else candidate.get('id') if candidate else None
         if candidate_id_for_update:
-            update_candidate_email_status(candidate_id_for_update, email_status)
+            try:
+                update_candidate_email_status(candidate_id_for_update, email_status)
+                logger.info(f"📝 Updated candidate {candidate_id_for_update} email status: {email_status['status']}")
+            except Exception as update_error:
+                logger.error(f"Failed to update email status in database: {update_error}")
         
-        return {
-            "email_sent": True,
-            "status": "success",
-            "recipient": candidate_email,
-            "sent_at": datetime.now().isoformat(),
-            "subject": subject,
-            "confirmed_slot": confirmed_slot
-        }
+        # Return appropriate response based on email delivery status
+        if email_sent == True:
+            return {
+                "email_sent": True,
+                "status": "success",
+                "recipient": candidate_email,
+                "sent_at": datetime.now().isoformat(),
+                "subject": subject,
+                "confirmed_slot": confirmed_slot,
+                "service": email_service_used
+            }
+        elif email_sent == "logged":
+            return {
+                "email_sent": False,  # False because not actually delivered
+                "status": "logged_for_manual",
+                "recipient": candidate_email,
+                "sent_at": datetime.now().isoformat(),
+                "subject": subject,
+                "confirmed_slot": confirmed_slot,
+                "note": "Email logged for manual follow-up"
+            }
+        else:
+            return {
+                "email_sent": False,
+                "status": "failed",
+                "recipient": candidate_email,
+                "sent_at": datetime.now().isoformat(),
+                "subject": subject,
+                "confirmed_slot": confirmed_slot,
+                "error": "All email providers failed"
+            }
         
     except Exception as e:
         logger.error(f"Failed to send confirmation email: {e}")
