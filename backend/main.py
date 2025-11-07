@@ -317,6 +317,7 @@ TIME_SLOTS = [
 
 # Data models for conversation tracking
 @dataclass
+@dataclass
 class ConversationTurn:
     turn_number: int
     candidate_input: str
@@ -1095,16 +1096,21 @@ def update_candidate_email_status(candidate_id: str, email_status: dict) -> bool
 
         # Update candidate with email status - ensure parent structure exists
         try:
-            # First, ensure the call_tracking and interview_details structure exists
+            # First, initialize the interview_details structure if it's null or doesn't exist
             coll.update_one(
-                {"_id": ObjectId(candidate_id)},
                 {
-                    "$setOnInsert": {
+                    "_id": ObjectId(candidate_id),
+                    "$or": [
+                        {"call_tracking.interview_details": {"$exists": False}},
+                        {"call_tracking.interview_details": None}
+                    ]
+                },
+                {
+                    "$set": {
                         "call_tracking.interview_details": {},
                         "call_tracking.created_at": datetime.now().isoformat()
                     }
-                },
-                upsert=True
+                }
             )
             
             # Then update the email status
@@ -1352,9 +1358,10 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         msg.attach(part1)
         msg.attach(part2)
         
-        # Send email with improved error handling
+        # Send email with improved error handling and fallback
         server = None
         try:
+            logger.info(f"Attempting to send email via {SMTP_SERVER}:{SMTP_PORT}")
             server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
             server.starttls()
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
@@ -1362,7 +1369,12 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
             logger.info(f"Email sent successfully to {candidate_email}")
         except Exception as smtp_error:
             logger.error(f"SMTP error sending email: {smtp_error}")
-            raise smtp_error
+            # Log additional network debugging info
+            logger.error(f"SMTP Config: Server={SMTP_SERVER}, Port={SMTP_PORT}, User={SMTP_USERNAME[:5]}***")
+            
+            # Don't raise the error - let the conversation continue
+            # raise smtp_error
+            return False
         finally:
             if server:
                 try:
@@ -1733,7 +1745,9 @@ async def process_speech(request: Request):
                         email_sent = False
                         try:
                             if candidate and candidate.get('email'):
-                                email_sent = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                                email_result = await send_interview_confirmation_email(candidate, confirmed_slot, call_sid)
+                                # Handle both dictionary and boolean returns
+                                email_sent = email_result.get("email_sent", False) if isinstance(email_result, dict) else bool(email_result)
                             else:
                                 logger.warning("No candidate email available for confirmation")
                         except Exception as email_error:
@@ -1827,7 +1841,9 @@ async def process_speech(request: Request):
                     
                     # Send confirmation email
                     try:
-                        email_sent = await send_interview_confirmation_email(candidate, mentioned_slot, call_sid)
+                        email_result = await send_interview_confirmation_email(candidate, mentioned_slot, call_sid)
+                        # Handle both dictionary and boolean returns
+                        email_sent = email_result.get("email_sent", False) if isinstance(email_result, dict) else bool(email_result)
                     except Exception as email_error:
                         logger.error(f"Failed to send confirmation email: {email_error}")
                         email_sent = False
