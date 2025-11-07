@@ -14,6 +14,7 @@ import logging
 import html
 import xml.etree.ElementTree as ET
 import smtplib
+import requests
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 try:
@@ -1377,85 +1378,154 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         msg.attach(part1)
         msg.attach(part2)
         
-        # Send email with improved error handling and multiple SMTP fallbacks
-        server = None
+        # Send email with Resend API (primary) and fallbacks
         email_sent = False
         
-        # Try primary SMTP (Gmail)
-        try:
-            logger.info(f"Attempting to send email via {SMTP_SERVER}:{SMTP_PORT}")
-            server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
-            server.starttls()
-            server.login(SMTP_USERNAME, SMTP_PASSWORD)
-            server.send_message(msg)
-            logger.info(f"Email sent successfully to {candidate_email}")
-            email_sent = True
-        except Exception as smtp_error:
-            logger.error(f"Primary SMTP error: {smtp_error}")
-            logger.error(f"SMTP Config: Server={SMTP_SERVER}, Port={SMTP_PORT}, User={SMTP_USERNAME[:5]}***")
-            
-            # Try alternative SMTP port (465 SSL)
+        # Try Resend API first (most reliable on Render)
+        resend_api_key = config("RESEND_API_KEY", default=None)
+        if resend_api_key:
             try:
-                logger.info("Trying alternative SMTP with SSL port 465...")
+                logger.info(f"Attempting to send email via Resend API to {candidate_email}")
+                
+                resend_url = "https://api.resend.com/emails"
+                resend_payload = {
+                    "from": f"Sarah Johnson - LinkUp Talent Team <{SENDER_EMAIL}>",
+                    "to": [candidate_email],
+                    "subject": subject,
+                    "html": html_body,
+                    "text": text_body,
+                    "headers": {
+                        "X-Entity-Ref-ID": call_sid
+                    },
+                    "tags": [
+                        {"name": "category", "value": "interview-confirmation"},
+                        {"name": "candidate", "value": candidate_name.replace(" ", "_")}
+                    ]
+                }
+                
+                resend_headers = {
+                    "Authorization": f"Bearer {resend_api_key}",
+                    "Content-Type": "application/json"
+                }
+                
+                response = requests.post(
+                    resend_url, 
+                    json=resend_payload, 
+                    headers=resend_headers, 
+                    timeout=15
+                )
+                
+                if response.status_code in (200, 201):
+                    response_data = response.json()
+                    email_id = response_data.get('id', 'unknown')
+                    logger.info(f"✅ Resend API: Email successfully sent to {candidate_email} (ID: {email_id})")
+                    email_sent = True
+                else:
+                    logger.error(f"❌ Resend API error: {response.status_code} - {response.text}")
+                    
+            except Exception as resend_error:
+                logger.error(f"Resend API failed: {resend_error}")
+        else:
+            logger.warning("RESEND_API_KEY not configured, skipping Resend API")
+        
+        # Fallback to SendGrid if Resend failed
+        if not email_sent:
+            sendgrid_api_key = config("SENDGRID_API_KEY", default=None)
+            if sendgrid_api_key:
+                try:
+                    logger.info(f"Attempting SendGrid API fallback to {candidate_email}")
+                    
+                    sendgrid_url = "https://api.sendgrid.com/v3/mail/send"
+                    sendgrid_payload = {
+                        "personalizations": [
+                            {
+                                "to": [{"email": candidate_email, "name": candidate_name}],
+                                "subject": subject
+                            }
+                        ],
+                        "from": {"email": SENDER_EMAIL, "name": "Sarah Johnson - LinkUp Talent Team"},
+                        "content": [
+                            {"type": "text/plain", "value": text_body},
+                            {"type": "text/html", "value": html_body}
+                        ]
+                    }
+                    
+                    sendgrid_headers = {
+                        "Authorization": f"Bearer {sendgrid_api_key}",
+                        "Content-Type": "application/json"
+                    }
+                    
+                    response = requests.post(
+                        sendgrid_url, 
+                        json=sendgrid_payload, 
+                        headers=sendgrid_headers, 
+                        timeout=15
+                    )
+                    
+                    if response.status_code in (200, 202):
+                        logger.info(f"✅ SendGrid fallback: Email sent to {candidate_email}")
+                        email_sent = True
+                    else:
+                        logger.error(f"❌ SendGrid fallback error: {response.status_code} - {response.text}")
+                        
+                except Exception as sendgrid_error:
+                    logger.error(f"SendGrid fallback failed: {sendgrid_error}")
+        
+        # Final fallback to SMTP if both API methods failed
+        if not email_sent:
+            server = None
+            # Try primary SMTP (Gmail)
+            try:
+                logger.info(f"Attempting SMTP fallback via {SMTP_SERVER}:{SMTP_PORT}")
+                server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
+                server.starttls()
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(msg)
+                logger.info(f"Email sent successfully to {candidate_email} via SMTP")
+                email_sent = True
+            except Exception as smtp_error:
+                logger.error(f"Primary SMTP error: {smtp_error}")
+                logger.error(f"SMTP Config: Server={SMTP_SERVER}, Port={SMTP_PORT}, User={SMTP_USERNAME[:5]}***")
+                
+                # Try alternative SMTP port (465 SSL)
+                try:
+                    logger.info("Trying alternative SMTP with SSL port 465...")
+                    if server:
+                        try:
+                            server.quit()
+                        except:
+                            pass
+                    
+                    server = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=30)
+                    server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                    server.send_message(msg)
+                    logger.info(f"Email sent successfully via SSL to {candidate_email}")
+                    email_sent = True
+                except Exception as ssl_error:
+                    logger.error(f"SSL SMTP also failed: {ssl_error}")
+                    
+                    # Try HTTP-based email service as final fallback
+                    try:
+                        logger.info("Attempting HTTP-based email fallback...")
+                        
+                        # For now, log the email content as a structured fallback
+                        logger.warning(f"📧 FALLBACK EMAIL LOG for {candidate_email}:")
+                        logger.warning(f"   Subject: {subject}")
+                        logger.warning(f"   Scheduled Slot: {confirmed_slot}")
+                        logger.warning(f"   Call SID: {call_sid}")
+                        logger.warning(f"   Content Length: {len(html_body)} chars")
+                        
+                        email_sent = "fallback"  # Mark as fallback success
+                        
+                    except Exception as http_error:
+                        logger.error(f"HTTP email fallback also failed: {http_error}")
+                        email_sent = False
+            finally:
                 if server:
                     try:
                         server.quit()
                     except:
                         pass
-                
-                server = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=30)
-                server.login(SMTP_USERNAME, SMTP_PASSWORD)
-                server.send_message(msg)
-                logger.info(f"Email sent successfully via SSL to {candidate_email}")
-                email_sent = True
-            except Exception as ssl_error:
-                logger.error(f"SSL SMTP also failed: {ssl_error}")
-                
-                # Try HTTP-based email service as final fallback
-                try:
-                    logger.info("Attempting HTTP-based email fallback...")
-                    
-                    # Option 1: Use requests to send via external email service
-                    # For now, we'll use a webhook or API-based approach
-                    
-                    import requests
-                    
-                    # Example: Send via webhook to a service like Zapier, Make.com, or custom endpoint
-                    fallback_data = {
-                        "to": candidate_email,
-                        "subject": subject,
-                        "html_body": html_body,
-                        "text_body": text_body,
-                        "from": SENDER_EMAIL,
-                        "timestamp": datetime.now().isoformat(),
-                        "call_sid": call_sid,
-                        "candidate_name": candidate_name,
-                        "confirmed_slot": confirmed_slot
-                    }
-                    
-                    # For now, log the email content as a structured fallback
-                    logger.warning(f"📧 FALLBACK EMAIL LOG for {candidate_email}:")
-                    logger.warning(f"   Subject: {subject}")
-                    logger.warning(f"   Scheduled Slot: {confirmed_slot}")
-                    logger.warning(f"   Call SID: {call_sid}")
-                    logger.warning(f"   Content Length: {len(html_body)} chars")
-                    
-                    # In production, you could POST to:
-                    # - SendGrid API: https://api.sendgrid.com/v3/mail/send  
-                    # - Mailgun API: https://api.mailgun.net/v3/YOUR_DOMAIN/messages
-                    # - Custom webhook endpoint that handles email sending
-                    
-                    email_sent = "fallback"  # Mark as fallback success
-                    
-                except Exception as http_error:
-                    logger.error(f"HTTP email fallback also failed: {http_error}")
-                    email_sent = False
-        finally:
-            if server:
-                try:
-                    server.quit()
-                except:
-                    pass
         
         if not email_sent or email_sent == "fallback":
             if email_sent == "fallback":
