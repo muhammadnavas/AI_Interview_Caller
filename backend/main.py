@@ -1096,10 +1096,23 @@ def update_candidate_email_status(candidate_id: str, email_status: dict) -> bool
 
         # Update candidate with email status - ensure parent structure exists
         try:
+            # Try to use ObjectId first
+            try:
+                query = {"_id": ObjectId(candidate_id)}
+            except Exception as oid_error:
+                # If ObjectId fails, try alternative queries
+                logger.warning(f"Invalid ObjectId {candidate_id}, trying alternative lookup: {oid_error}")
+                query = {"$or": [
+                    {"id": candidate_id},
+                    {"candidateEmail": candidate_id},
+                    {"phoneNumber": candidate_id.replace("+91", "")},
+                    {"phoneNumber": candidate_id}
+                ]}
+            
             # First, initialize the interview_details structure if it's null or doesn't exist
-            coll.update_one(
+            init_result = coll.update_one(
                 {
-                    "_id": ObjectId(candidate_id),
+                    **query,
                     "$or": [
                         {"call_tracking.interview_details": {"$exists": False}},
                         {"call_tracking.interview_details": None}
@@ -1115,7 +1128,7 @@ def update_candidate_email_status(candidate_id: str, email_status: dict) -> bool
             
             # Then update the email status
             result = coll.update_one(
-                {"_id": ObjectId(candidate_id)},
+                query,
                 {
                     "$set": {
                         "call_tracking.interview_details.email_status": email_status,
@@ -1123,11 +1136,17 @@ def update_candidate_email_status(candidate_id: str, email_status: dict) -> bool
                     }
                 }
             )
+            
+            if result.modified_count > 0:
+                logger.info(f"Successfully updated email status for candidate {candidate_id}")
+            else:
+                logger.warning(f"No candidate document updated for ID: {candidate_id}")
+                
             client.close()
             return result.modified_count > 0
             
         except Exception as e:
-            logger.error(f"Error updating email status: {e}")
+            logger.error(f"Error updating email status: {e}, full error: {e}")
             client.close()
             return False
 
@@ -1358,8 +1377,11 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
         msg.attach(part1)
         msg.attach(part2)
         
-        # Send email with improved error handling and fallback
+        # Send email with improved error handling and multiple SMTP fallbacks
         server = None
+        email_sent = False
+        
+        # Try primary SMTP (Gmail)
         try:
             logger.info(f"Attempting to send email via {SMTP_SERVER}:{SMTP_PORT}")
             server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30)
@@ -1367,20 +1389,39 @@ async def send_interview_confirmation_email(candidate: dict, confirmed_slot: str
             server.login(SMTP_USERNAME, SMTP_PASSWORD)
             server.send_message(msg)
             logger.info(f"Email sent successfully to {candidate_email}")
+            email_sent = True
         except Exception as smtp_error:
-            logger.error(f"SMTP error sending email: {smtp_error}")
-            # Log additional network debugging info
+            logger.error(f"Primary SMTP error: {smtp_error}")
             logger.error(f"SMTP Config: Server={SMTP_SERVER}, Port={SMTP_PORT}, User={SMTP_USERNAME[:5]}***")
             
-            # Don't raise the error - let the conversation continue
-            # raise smtp_error
-            return False
+            # Try alternative SMTP port (465 SSL)
+            try:
+                logger.info("Trying alternative SMTP with SSL port 465...")
+                if server:
+                    try:
+                        server.quit()
+                    except:
+                        pass
+                
+                server = smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=30)
+                server.login(SMTP_USERNAME, SMTP_PASSWORD)
+                server.send_message(msg)
+                logger.info(f"Email sent successfully via SSL to {candidate_email}")
+                email_sent = True
+            except Exception as ssl_error:
+                logger.error(f"SSL SMTP also failed: {ssl_error}")
+                # Continue without email - don't break the conversation
+                email_sent = False
         finally:
             if server:
                 try:
                     server.quit()
                 except:
                     pass
+        
+        if not email_sent:
+            logger.warning(f"All email attempts failed for {candidate_email}, continuing without email confirmation")
+            return False
         
         logger.info(f"Interview confirmation email sent to {candidate_email} for slot: {confirmed_slot}")
         
