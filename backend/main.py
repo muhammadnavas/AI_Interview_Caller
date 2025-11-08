@@ -948,8 +948,8 @@ def update_candidate_interview_scheduled(candidate_id: str, interview_details: d
             return False
 
         client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
-        db_name = config("MONGODB_DB", default="ai_interview_schedule")
-        coll_name = config("MONGODB_COLLECTION", default="candidates")
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
         db = client[db_name]
         coll = db[coll_name]
 
@@ -979,23 +979,40 @@ def update_candidate_interview_scheduled(candidate_id: str, interview_details: d
             }
         }
 
+        logger.info(f"📝 Executing MongoDB update with query: {query}")
+        logger.info(f"📝 Update data: {update_data}")
+        
         result = coll.update_one(query, update_data)
         
+        logger.info(f"📊 MongoDB update result - matched: {result.matched_count}, modified: {result.modified_count}")
+        
         if result.modified_count > 0:
-            logger.info(f"Updated interview details for candidate {candidate_id}: {interview_details.get('scheduled_slot')}")
+            logger.info(f"✅ Successfully updated interview details for candidate {candidate_id}: {interview_details.get('scheduled_slot')}")
+            
             # Verify the update by fetching the document
             doc = coll.find_one(query)
             if doc:
-                logger.info(f"Candidate status updated: {doc.get('call_tracking', {}).get('status')}")
+                interview_status = doc.get('call_tracking', {}).get('status', 'unknown')
+                scheduled_slot = doc.get('call_tracking', {}).get('interview_details', {}).get('scheduled_slot', 'none')
+                logger.info(f"✅ Verification - Status: {interview_status}, Slot: {scheduled_slot}")
             return True
         else:
-            logger.error(f"❌ Failed to update candidate {candidate_id}. Query: {query}")
-            # Check if document exists
-            doc = coll.find_one(query)
-            if doc:
-                logger.error(f"❌ Document exists but update failed. Current call_tracking: {doc.get('call_tracking')}")
-            else:
+            if result.matched_count == 0:
                 logger.error(f"❌ No document found with candidate_id: {candidate_id}")
+                logger.error(f"❌ Query used: {query}")
+                
+                # Try to find any document that might match
+                test_docs = list(coll.find().limit(3))
+                if test_docs:
+                    sample_doc = test_docs[0]
+                    logger.error(f"📄 Sample document structure: _id={sample_doc.get('_id')}, candidateName={sample_doc.get('candidateName')}")
+                else:
+                    logger.error(f"📄 Collection appears to be empty")
+            else:
+                logger.error(f"❌ Document found but update failed. Matched: {result.matched_count}")
+                doc = coll.find_one(query)
+                if doc:
+                    logger.error(f"❌ Current call_tracking: {doc.get('call_tracking')}")
             return False
 
     except Exception as e:
@@ -1995,19 +2012,36 @@ async def process_speech(request: Request):
                     
                     # Get candidate info for comprehensive tracking
                     candidate = session.candidate or CANDIDATE
-                    if isinstance(candidate, dict) and candidate.get('id'):
-                        candidate_id = candidate.get('id')
-                    elif session.candidate_phone:
-                        # If no candidate ID, try to find candidate by phone
+                    candidate_id = None
+                    
+                    # Try to get MongoDB ObjectId for database operations
+                    if session.candidate and isinstance(session.candidate, dict):
+                        # Use the raw document _id if available
+                        raw_doc = session.candidate.get('raw')
+                        if raw_doc and raw_doc.get('_id'):
+                            candidate_id = str(raw_doc.get('_id'))
+                            logger.info(f"✅ Using existing candidate ObjectId: {candidate_id}")
+                        elif session.candidate.get('id'):
+                            candidate_id = session.candidate.get('id')
+                            logger.info(f"✅ Using candidate ID from session: {candidate_id}")
+                    
+                    # If no candidate ID yet, try to find by phone
+                    if not candidate_id and session.candidate_phone:
+                        logger.info(f"🔍 Looking up candidate by phone: {session.candidate_phone}")
                         found_candidate = find_candidate_by_phone(session.candidate_phone)
                         if found_candidate:
-                            candidate_id = found_candidate.get('id')
+                            candidate_id = found_candidate.get('id')  # This is the MongoDB ObjectId as string
                             session.candidate = found_candidate  # Update session with found candidate
                             candidate = found_candidate  # Update candidate for email
+                            logger.info(f"✅ Found candidate by phone - ID: {candidate_id}, Name: {found_candidate.get('name')}")
                         else:
+                            logger.warning(f"❌ No candidate found for phone: {session.candidate_phone}")
                             candidate_id = f"phone_{session.candidate_phone}"
-                    else:
-                        candidate_id = candidate.get('email', 'unknown')
+                    
+                    # Final fallback
+                    if not candidate_id:
+                        candidate_id = candidate.get('email', 'unknown') if candidate else 'unknown'
+                        logger.warning(f"⚠️ Using fallback candidate ID: {candidate_id}")
                     
                     logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
                     
@@ -2021,6 +2055,11 @@ async def process_speech(request: Request):
                         email_sent = False
                     
                     # Save interview schedule to MongoDB
+                    logger.info(f"💾 Saving interview schedule to MongoDB...")
+                    logger.info(f"   Candidate ID: {candidate_id}")
+                    logger.info(f"   Scheduled Slot: {mentioned_slot}")
+                    logger.info(f"   Call SID: {call_sid}")
+                    
                     try:
                         interview_details = {
                             "scheduled_slot": mentioned_slot,
@@ -2028,9 +2067,17 @@ async def process_speech(request: Request):
                             "email_sent": email_sent,
                             "scheduled_at": datetime.now().isoformat()
                         }
-                        update_candidate_interview_scheduled(candidate_id, interview_details)
+                        
+                        update_result = update_candidate_interview_scheduled(candidate_id, interview_details)
+                        if update_result:
+                            logger.info(f"✅ Successfully saved interview schedule to MongoDB")
+                        else:
+                            logger.error(f"❌ Failed to save interview schedule - update_result: {update_result}")
+                            
                     except Exception as mongo_error:
-                        logger.error(f"Failed to update MongoDB: {mongo_error}")
+                        logger.error(f"💥 MongoDB update failed with exception: {mongo_error}")
+                        import traceback
+                        logger.error(f"Full traceback: {traceback.format_exc()}")
                     
                     # Log successful scheduling
                     log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
