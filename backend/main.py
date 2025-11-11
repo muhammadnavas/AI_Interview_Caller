@@ -1172,6 +1172,66 @@ def update_candidate_email_status(candidate_id: str, email_status: dict) -> bool
         logger.error(f"Error updating candidate email status: {e}")
         return False
 
+def update_interview_status(candidate_id: str, status: str, confirmed_slot: str = None, call_sid: str = None) -> bool:
+    """Update the main interviewStatus field in MongoDB document"""
+    try:
+        try:
+            from pymongo import MongoClient
+            from bson import ObjectId
+        except ImportError:
+            logger.warning("pymongo not installed; cannot update interview status")
+            return False
+
+        mongodb_uri = config("MONGODB_URI", default=None)
+        if not mongodb_uri:
+            return False
+
+        client = MongoClient(mongodb_uri, serverSelectionTimeoutMS=5000)
+        db_name = config("MONGODB_DB", default="test")
+        coll_name = config("MONGODB_COLLECTION", default="shortlistedcandidates")
+        db = client[db_name]
+        coll = db[coll_name]
+
+        # Build update data
+        update_data = {
+            "interviewStatus": status,
+            "updatedAt": datetime.now().isoformat()
+        }
+        
+        # Add optional fields if provided
+        if confirmed_slot:
+            update_data["scheduledInterviewDate"] = confirmed_slot
+        if call_sid:
+            update_data["lastCallSid"] = call_sid
+            
+        # Update using ObjectId
+        try:
+            query = {"_id": ObjectId(candidate_id)}
+            logger.info(f"🔄 Updating interview status for ObjectId {candidate_id}: {status}")
+        except Exception as oid_error:
+            logger.error(f"Invalid ObjectId {candidate_id}: {oid_error}")
+            return False
+
+        result = coll.update_one(
+            query,
+            {"$set": update_data}
+        )
+        
+        if result.modified_count > 0:
+            logger.info(f"✅ Successfully updated interview status for {candidate_id}: {status}")
+            if confirmed_slot:
+                logger.info(f"✅ Scheduled interview slot: {confirmed_slot}")
+            client.close()
+            return True
+        else:
+            logger.error(f"❌ No candidate document found for ID: {candidate_id}")
+            client.close()
+            return False
+            
+    except Exception as e:
+        logger.error(f"Error updating interview status for {candidate_id}: {e}")
+        return False
+
 def get_candidate_call_status(candidate_id: str) -> dict:
     """Get call tracking status for a candidate from MongoDB"""
     try:
@@ -1962,6 +2022,10 @@ async def process_speech(request: Request):
                             if candidate_id and candidate_id != 'unknown':
                                 update_candidate_interview_scheduled(candidate_id, interview_details)
                                 logger.info(f"Updated MongoDB with interview details for candidate {candidate_id}")
+                                
+                                # Update the main interview status field
+                                update_interview_status(candidate_id, "interview_scheduled", confirmed_slot, call_sid)
+                                logger.info(f"✅ Updated interview status to 'interview_scheduled' for candidate {candidate_id}")
                             else:
                                 logger.warning("Could not update MongoDB - no valid candidate ID")
                         except Exception as db_error:
@@ -2071,6 +2135,10 @@ async def process_speech(request: Request):
                         update_result = update_candidate_interview_scheduled(candidate_id, interview_details)
                         if update_result:
                             logger.info(f"✅ Successfully saved interview schedule to MongoDB")
+                            
+                            # Update the main interview status field
+                            update_interview_status(candidate_id, "interview_scheduled", mentioned_slot, call_sid)
+                            logger.info(f"✅ Updated interview status to 'interview_scheduled' for candidate {candidate_id}")
                         else:
                             logger.error(f"❌ Failed to save interview schedule - update_result: {update_result}")
                             
@@ -2102,6 +2170,13 @@ async def process_speech(request: Request):
             session.status = "failed"
             session.end_time = datetime.now().isoformat()
             next_action = "end_call"
+            
+            # Update interview status to reflect call ended without scheduling
+            if session.candidate and isinstance(session.candidate, dict):
+                candidate_id = session.candidate.get('id')
+                if candidate_id:
+                    update_interview_status(candidate_id, "call_completed_no_scheduling", None, call_sid)
+                    logger.info(f"📞 Updated status: call completed without scheduling for {candidate_id}")
         
         # Prevent infinite loops - max 6 turns total
         if turn_number > 6:
@@ -2109,6 +2184,18 @@ async def process_speech(request: Request):
             session.status = "failed" if not session.confirmed_slot else "completed"
             session.end_time = datetime.now().isoformat()
             next_action = "end_call"
+            
+            # Update interview status based on whether scheduling was completed
+            if session.candidate and isinstance(session.candidate, dict):
+                candidate_id = session.candidate.get('id')
+                if candidate_id:
+                    if session.confirmed_slot:
+                        # This should have been handled already, but just in case
+                        update_interview_status(candidate_id, "interview_scheduled", session.confirmed_slot, call_sid)
+                        logger.info(f"✅ Max turns reached - interview was scheduled for {candidate_id}")
+                    else:
+                        update_interview_status(candidate_id, "call_timeout", None, call_sid)
+                        logger.info(f"⏰ Max turns reached - call timed out without scheduling for {candidate_id}")
         
         # Record conversation turn
         turn = ConversationTurn(
