@@ -1970,25 +1970,35 @@ async def process_speech(request: Request):
                         candidate = session.candidate or CANDIDATE
                         candidate_id = None
                         
+                        logger.info(f"🔍 DEBUG: Resolving candidate ID...")
+                        logger.info(f"🔍 DEBUG: session.candidate_phone = {session.candidate_phone}")
+                        logger.info(f"🔍 DEBUG: session.candidate = {session.candidate}")
+                        
                         try:
                             if isinstance(candidate, dict) and candidate.get('id'):
                                 candidate_id = candidate.get('id')
+                                logger.info(f"🔍 DEBUG: Found candidate ID from session.candidate: {candidate_id}")
                             elif session.candidate_phone:
                                 # If no candidate ID, try to find candidate by phone
+                                logger.info(f"🔍 DEBUG: Looking up candidate by phone: {session.candidate_phone}")
                                 found_candidate = find_candidate_by_phone(session.candidate_phone)
                                 if found_candidate:
                                     candidate_id = found_candidate.get('id')
+                                    logger.info(f"🔍 DEBUG: Found candidate by phone lookup - ID: {candidate_id}, Name: {found_candidate.get('name')}")
                                     session.candidate = found_candidate  # Update session with found candidate
                                     candidate = found_candidate  # Update candidate for email
                                 else:
                                     candidate_id = f"phone_{session.candidate_phone}"
+                                    logger.warning(f"🔍 DEBUG: No candidate found by phone, using fallback ID: {candidate_id}")
                             else:
                                 candidate_id = candidate.get('email', 'unknown') if candidate else 'unknown'
+                                logger.info(f"🔍 DEBUG: Using email fallback for candidate ID: {candidate_id}")
                         except Exception as candidate_error:
-                            logger.error(f"Error processing candidate info: {candidate_error}")
+                            logger.error(f"🔍 DEBUG: Error processing candidate info: {candidate_error}")
                             candidate_id = 'unknown'
                         
-                        logger.info(f"Processing interview confirmation for candidate ID: {candidate_id}")
+                        logger.info(f"🎯 FINAL candidate ID for MongoDB update: {candidate_id}")
+                        logger.info(f"🎯 Candidate ID validation: valid={candidate_id and candidate_id != 'unknown' and not candidate_id.startswith('phone_')}")
                         
                         # Send confirmation email (don't let this block the confirmation)
                         email_sent = False
@@ -2019,15 +2029,33 @@ async def process_speech(request: Request):
                                 "scheduling_completed": True,
                                 "candidate_confirmed": True
                             }
-                            if candidate_id and candidate_id != 'unknown':
-                                update_candidate_interview_scheduled(candidate_id, interview_details)
-                                logger.info(f"Updated MongoDB with interview details for candidate {candidate_id}")
+                            # Only update if we have a valid MongoDB ObjectId (24 character hex string)
+                            is_valid_candidate_id = (
+                                candidate_id and 
+                                candidate_id != 'unknown' and 
+                                not candidate_id.startswith('phone_') and
+                                len(candidate_id) == 24
+                            )
+                            
+                            logger.info(f"🔍 Candidate ID validation: {candidate_id} -> valid: {is_valid_candidate_id}")
+                            
+                            if is_valid_candidate_id:
+                                logger.info(f"💾 Updating MongoDB for valid candidate ID: {candidate_id}")
                                 
-                                # Update the main interview status field
-                                update_interview_status(candidate_id, "interview_scheduled", confirmed_slot, call_sid)
-                                logger.info(f"✅ Updated interview status to 'interview_scheduled' for candidate {candidate_id}")
+                                # Update interview scheduling details
+                                update_result = update_candidate_interview_scheduled(candidate_id, interview_details)
+                                logger.info(f"Interview details update result: {update_result}")
+                                
+                                # Update the main interview status field  
+                                status_result = update_interview_status(candidate_id, "interview_scheduled", confirmed_slot, call_sid)
+                                logger.info(f"Interview status update result: {status_result}")
+                                
+                                if update_result and status_result:
+                                    logger.info(f"✅ Successfully updated all MongoDB fields for candidate {candidate_id}")
+                                else:
+                                    logger.error(f"❌ Some MongoDB updates failed - details: {update_result}, status: {status_result}")
                             else:
-                                logger.warning("Could not update MongoDB - no valid candidate ID")
+                                logger.warning(f"❌ Invalid candidate ID for MongoDB update: '{candidate_id}' - skipping database updates")
                         except Exception as db_error:
                             logger.error(f"Failed to update MongoDB: {db_error}")
                             # Continue anyway - the confirmation can still work
@@ -2124,28 +2152,38 @@ async def process_speech(request: Request):
                     logger.info(f"   Scheduled Slot: {mentioned_slot}")
                     logger.info(f"   Call SID: {call_sid}")
                     
-                    try:
-                        interview_details = {
-                            "scheduled_slot": mentioned_slot,
-                            "call_sid": call_sid,
-                            "email_sent": email_sent,
-                            "scheduled_at": datetime.now().isoformat()
-                        }
-                        
-                        update_result = update_candidate_interview_scheduled(candidate_id, interview_details)
-                        if update_result:
-                            logger.info(f"✅ Successfully saved interview schedule to MongoDB")
+                    # Validate candidate ID before MongoDB operations
+                    is_valid_candidate_id = (
+                        candidate_id and 
+                        candidate_id != 'unknown' and 
+                        not candidate_id.startswith('phone_') and
+                        len(candidate_id) == 24
+                    )
+                    
+                    logger.info(f"🔍 Second location - Candidate ID validation: {candidate_id} -> valid: {is_valid_candidate_id}")
+                    
+                    if is_valid_candidate_id:
+                        try:
+                            interview_details = {
+                                "scheduled_slot": mentioned_slot,
+                                "call_sid": call_sid,
+                                "email_sent": email_sent,
+                                "scheduled_at": datetime.now().isoformat()
+                            }
                             
-                            # Update the main interview status field
-                            update_interview_status(candidate_id, "interview_scheduled", mentioned_slot, call_sid)
-                            logger.info(f"✅ Updated interview status to 'interview_scheduled' for candidate {candidate_id}")
-                        else:
-                            logger.error(f"❌ Failed to save interview schedule - update_result: {update_result}")
+                            update_result = update_candidate_interview_scheduled(candidate_id, interview_details)
+                            status_result = update_interview_status(candidate_id, "interview_scheduled", mentioned_slot, call_sid)
                             
-                    except Exception as mongo_error:
-                        logger.error(f"💥 MongoDB update failed with exception: {mongo_error}")
-                        import traceback
-                        logger.error(f"Full traceback: {traceback.format_exc()}")
+                            if update_result and status_result:
+                                logger.info(f"✅ Successfully updated all MongoDB fields for candidate {candidate_id}")
+                            else:
+                                logger.error(f"❌ Some MongoDB updates failed - details: {update_result}, status: {status_result}")
+                        except Exception as mongo_error:
+                            logger.error(f"💥 MongoDB update failed: {mongo_error}")
+                            import traceback
+                            logger.error(f"Full traceback: {traceback.format_exc()}")
+                    else:
+                        logger.warning(f"❌ Invalid candidate ID - skipping MongoDB updates: '{candidate_id}'")
                     
                     # Log successful scheduling
                     log_system_event("INFO", "INTERVIEW_SYSTEM", "INTERVIEW_SCHEDULED", 
