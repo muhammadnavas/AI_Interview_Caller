@@ -55,18 +55,24 @@ coverage.xml
 *.cover
 .hypothesis/
 
-# Json files
-*.json
-*.jsonl
-*.jsonl.gz
-*.jsonl.bz2
-*.jsonl.zip
-*.jsonl.tar
+# Logs and temporary files
+*.log
+*.db
+*.sqlite
+*.sqlite3
 
-# HTML files
-*.html
-*.html.gz
-*.html.bz2
-*.html.zip
-*.html.tar
+# Test and development files
+test_*.py
+*_test.py
+debug_*.py
+conversation.log
+conversations.db
+
+# Documentation drafts
+API_RESPONSES.md
+FINAL_RESPONSE_DOCS.md
 **/logs1/
+
+# Lock files
+uv.lock
+poetry.lock
