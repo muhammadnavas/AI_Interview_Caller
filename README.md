@@ -115,59 +115,6 @@ An intelligent automated interview scheduling system that uses AI-powered phone 
    npm run dev
    ```
 
-## 🗄️ Database Schema
-
-### MongoDB Collections
-
-#### shortlistedcandidates
-```json
-{
-  "_id": ObjectId,
-  "candidateName": "string",
-  "candidateEmail": "string", 
-  "phoneNumber": "string",
-  "role": "string",
-  "companyName": "string",
-  "interviewStatus": "active|calling|scheduled|completed|failed",
-  "call_tracking": {
-    "total_attempts": Number,
-    "status": "string",
-    "interview_details": {
-      "scheduled_slot": "string",
-      "scheduled_at": "ISODate",
-      "call_sid": "string",
-      "email_sent": Boolean,
-      "email_status": {
-        "sent": Boolean,
-        "status": "string",
-        "sent_at": "ISODate",
-        "service": "string"
-      }
-    },
-    "call_history": []
-  }
-}
-```
-
-#### conversations
-```json
-{
-  "call_sid": "string",
-  "candidate_id": "string",
-  "status": "active|completed|failed",
-  "confirmed_slot": "string",
-  "turns": [
-    {
-      "turn_number": Number,
-      "candidate_input": "string", 
-      "ai_response": "string",
-      "intent_detected": "string",
-      "confidence_score": Number
-    }
-  ]
-}
-```
-
 ## 🤝 Contributing
 
 1. Fork the repository
